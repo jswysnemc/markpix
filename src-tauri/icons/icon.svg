@@ -1,0 +1,20 @@
+                <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="grad3" x1="0" y1="0" x2="100" y2="100">
+                            <stop offset="0%" stop-color="#BB9AF7" />
+                            <stop offset="100%" stop-color="#7AA2F7" />
+                        </linearGradient>
+                    </defs>
+                    
+                    <!-- 裁剪框/取景框 -->
+                    <path d="M25 25 H 40 M 25 25 V 40" stroke="#565f89" stroke-width="6" stroke-linecap="round"/>
+                    <path d="M75 25 H 60 M 75 25 V 40" stroke="#565f89" stroke-width="6" stroke-linecap="round"/>
+                    <path d="M25 75 H 40 M 25 75 V 60" stroke="#565f89" stroke-width="6" stroke-linecap="round"/>
+                    <path d="M75 75 H 60 M 75 75 V 60" stroke="#565f89" stroke-width="6" stroke-linecap="round"/>
+
+                    <!-- M 形状作为画面主体 -->
+                    <path d="M30 65 L 30 35 L 50 55 L 70 35 L 70 65" stroke="url(#grad3)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+                    
+                    <!-- 焦点/编辑点 -->
+                    <circle cx="50" cy="30" r="4" fill="#E0AF68"/>
+                </svg>
