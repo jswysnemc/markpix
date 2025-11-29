@@ -4,6 +4,7 @@ import { useEditorStore } from "@/store/editorStore";
 import { Button } from "@/components/ui/Button";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ToolConfigPanel } from "./ToolConfigPanel";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   MousePointer2,
   Hand,
@@ -27,6 +28,9 @@ import {
   RotateCcw,
   ZoomIn,
   ZoomOut,
+  Minimize2,
+  Maximize2,
+  XCircle,
 } from "lucide-react";
 import type { ToolType } from "@/types";
 
@@ -50,6 +54,7 @@ interface ToolbarProps {
   onSave: () => void;
   onCopy: () => void;
   onOpenSettings: () => void;
+  onClose: () => void;
 }
 
 export function Toolbar({
@@ -57,6 +62,7 @@ export function Toolbar({
   onSave,
   onCopy,
   onOpenSettings,
+  onClose,
 }: ToolbarProps) {
   const {
     currentTool,
@@ -90,8 +96,10 @@ export function Toolbar({
   return (
     <div
       className={cn(
-        "absolute z-10 flex gap-1 p-2 rounded-lg",
-        "bg-background/95 backdrop-blur-sm border border-border shadow-lg",
+        "absolute z-10 flex gap-1 p-2 rounded-xl",
+        "bg-white/90 dark:bg-gray-900/95 backdrop-blur-md",
+        "border border-gray-200 dark:border-gray-700",
+        "shadow-[0_4px_20px_rgba(0,0,0,0.15)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.4)]",
         isHorizontal
           ? "bottom-4 left-1/2 -translate-x-1/2 flex-row items-center"
           : "right-4 top-1/2 -translate-y-1/2 flex-col items-center"
@@ -139,11 +147,14 @@ export function Toolbar({
             side={isHorizontal ? "top" : "left"}
           >
             <Button
-              variant="ghost"
+              variant={currentTool === tool.type ? "default" : "ghost"}
               size="icon-sm"
-              active={currentTool === tool.type}
               onClick={() => setCurrentTool(tool.type)}
               disabled={!image && tool.type !== "select"}
+              className={cn(
+                "transition-all duration-200",
+                currentTool === tool.type && "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 shadow-md scale-105 ring-2 ring-blue-200 dark:ring-blue-900"
+              )}
             >
               {tool.icon}
             </Button>
@@ -251,6 +262,45 @@ export function Toolbar({
           {Math.round(viewState.scale * 100)}%
         </div>
       )}
+
+      {/* 窗口控制 */}
+      <div
+        className={cn(
+          "flex gap-1",
+          isHorizontal ? "flex-row" : "flex-col",
+          "pl-1 border-l border-border",
+          !isHorizontal && "pl-0 pt-1 border-l-0 border-t"
+        )}
+      >
+        <Tooltip content="最小化" side={isHorizontal ? "top" : "left"}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => getCurrentWindow().minimize()}
+          >
+            <Minimize2 size={18} />
+          </Button>
+        </Tooltip>
+        <Tooltip content="最大化" side={isHorizontal ? "top" : "left"}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => getCurrentWindow().toggleMaximize()}
+          >
+            <Maximize2 size={18} />
+          </Button>
+        </Tooltip>
+        <Tooltip content="关闭" side={isHorizontal ? "top" : "left"}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            className="hover:bg-red-500/20 hover:text-red-500"
+          >
+            <XCircle size={18} />
+          </Button>
+        </Tooltip>
+      </div>
     </div>
   );
 }
@@ -278,11 +328,13 @@ export function FloatingToolConfig() {
   return (
     <div
       className={cn(
-        "absolute z-10 p-3 rounded-lg",
-        "bg-background/95 backdrop-blur-sm border border-border shadow-lg",
+        "absolute z-10 p-3 rounded-xl",
+        "bg-white/90 dark:bg-gray-900/95 backdrop-blur-md",
+        "border border-gray-200 dark:border-gray-700",
+        "shadow-[0_4px_20px_rgba(0,0,0,0.15)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.4)]",
         isHorizontal
-          ? "top-4 left-1/2 -translate-x-1/2"
-          : "left-4 top-1/2 -translate-y-1/2"
+          ? "bottom-20 left-1/2 -translate-x-1/2" // 移到下方工具栏上方
+          : "right-20 top-1/2 -translate-y-1/2"   // 移到右侧工具栏左侧
       )}
     >
       <ToolConfigPanel orientation={isHorizontal ? "horizontal" : "vertical"} />

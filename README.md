@@ -23,9 +23,13 @@
 - **缩放/平移** - 自由查看图片
 
 ### 自定义功能
-- **自定义动作** - 支持配置外部命令（如 OCR、上传图床等）
-- **主题切换** - 支持浅色/深色/跟随系统
-- **工具栏方向** - 支持水平/垂直布局
+- **自定义动作** - 支持配置外部命令（如 OCR、上传图床等），可在设置界面图形化管理
+- **主题切换** - 支持浅色/深色/自动（跟随系统），设置自动持久化
+- **输出文件配置** - 支持自定义输出文件名模板，使用变量如 `{input_file_base}`、`{YYYY_MM_DD-hh-mm-ss}`
+- **工具栏方向** - 根据图片比例自动调整水平/垂直布局
+
+### 性能优化
+- **马赛克效果** - 使用 Kuwahara 滤镜实现油画效果，积分图优化算法保证流畅性
 
 ## 🚀 快速开始
 
@@ -92,9 +96,17 @@ markpix --help
 
 ## 🔧 配置文件
 
-配置文件位于 `~/.config/markpix/config.toml`，支持自定义动作：
+配置文件位于 `~/.config/markpix/config.toml`：
 
 ```toml
+# 主题设置: light, dark, auto
+theme = "auto"
+
+# 输出文件名模板
+# 可用变量: {input_file_base}, {input_file}, {YYYY_MM_DD-hh-mm-ss}
+output_pattern = "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png"
+
+# 自定义动作
 [[custom_actions]]
 name = "OCR 识别"
 command = "tesseract {file} stdout"
@@ -104,7 +116,14 @@ icon = "scan"
 name = "上传到图床"
 command = "curl -F 'file=@{file}' https://your-image-host.com/upload"
 icon = "upload"
+
+[[custom_actions]]
+name = "打开所在文件夹"
+command = "xdg-open \"$(dirname \"{file}\")\""
+icon = "folder"
 ```
+
+> 💡 也可以在设置界面中图形化管理自定义动作，无需手动编辑配置文件。
 
 ## 🛠️ 技术栈
 

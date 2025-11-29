@@ -3,6 +3,7 @@ import { useRef, useEffect, useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useEditorStore } from "@/store/editorStore";
 import { AnnotationCanvas } from "./canvas/AnnotationCanvas";
 import { Toolbar, FloatingToolConfig } from "./toolbar/Toolbar";
@@ -11,10 +12,19 @@ import { SettingsDialog } from "./SettingsDialog";
 import type { CustomAction, ImageInfo } from "@/types";
 import Konva from "konva";
 
+// 工具栏高度和边距常量
+const TOOLBAR_HEIGHT = 48;
+const TOOLBAR_MARGIN = 16;
+const MIN_WINDOW_WIDTH = 900;
+const MIN_WINDOW_HEIGHT = 600;
+const MAX_WINDOW_WIDTH = 1920;
+const MAX_WINDOW_HEIGHT = 1080;
+
 export function Editor() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [showSettings, setShowSettings] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
   const {
     image,
@@ -28,7 +38,11 @@ export function Editor() {
     deleteAnnotation,
     cropArea,
     setCropArea,
-    clearAnnotations,
+    cropMask,
+    setCropMask,
+    pushHistory,
+    annotations,
+    outputPattern,
   } = useEditorStore();
 
   // 监听容器大小变化
@@ -55,6 +69,9 @@ export function Editor() {
   useEffect(() => {
     const init = async () => {
       try {
+        // 加载配置
+        await useEditorStore.getState().loadConfig();
+
         // 获取 CLI 传入的图片路径
         const initialPath = await invoke<string | null>("get_initial_image");
         if (initialPath) {
@@ -72,19 +89,46 @@ export function Editor() {
     init();
   }, [setCustomActions]);
 
+  // 根据图片大小调整窗口大小
+  const adjustWindowSize = useCallback(async (imgWidth: number, imgHeight: number) => {
+    try {
+      const appWindow = getCurrentWindow();
+      
+      // 计算理想窗口大小（图片大小 + 工具栏和边距）
+      const idealWidth = imgWidth + TOOLBAR_MARGIN * 2;
+      const idealHeight = imgHeight + TOOLBAR_HEIGHT + TOOLBAR_MARGIN * 3;
+      
+      // 限制在最小和最大范围内
+      const newWidth = Math.max(MIN_WINDOW_WIDTH, Math.min(MAX_WINDOW_WIDTH, idealWidth));
+      const newHeight = Math.max(MIN_WINDOW_HEIGHT, Math.min(MAX_WINDOW_HEIGHT, idealHeight));
+      
+      // 设置窗口大小
+      await appWindow.setSize(new LogicalSize(newWidth, newHeight));
+      
+      // 居中窗口
+      await appWindow.center();
+    } catch (error) {
+      console.error("调整窗口大小失败:", error);
+    }
+  }, []);
+
   // 从路径加载图片
   const loadImageFromPath = async (path: string) => {
     try {
       const dataUrl = await invoke<string>("read_image_file", { path });
       const img = new Image();
-      img.onload = () => {
+      img.onload = async () => {
         const imageInfo: ImageInfo = {
           src: dataUrl,
           width: img.width,
           height: img.height,
-          name: path.split("/").pop(),
+          name: path.split(/[\\/]/).pop(),
+          path: path,
         };
         setImage(imageInfo);
+        
+        // 自动调整窗口大小
+        await adjustWindowSize(img.width, img.height);
       };
       img.src = dataUrl;
     } catch (error) {
@@ -114,8 +158,10 @@ export function Editor() {
     }
   };
 
-  // 获取画布数据 URL
-  const getCanvasDataUrl = useCallback((): string | null => {
+  // 获取画布数据 URL（应用裁剪蒙版，保持原始图片大小）
+  const getCanvasDataUrl = useCallback(async (): Promise<string | null> => {
+    if (!image) return null;
+    
     // 查找 Konva Stage
     const stageElement = containerRef.current?.querySelector(".konvajs-content");
     if (!stageElement) return null;
@@ -126,25 +172,103 @@ export function Editor() {
     );
     if (!stage) return null;
 
-    // 导出为 Data URL
-    return stage.toDataURL({ pixelRatio: 2 });
-  }, []);
+    // 确定导出区域：如果有裁剪蒙版则使用蒙版区域，否则使用原始图片大小
+    const exportWidth = cropMask ? cropMask.width : image.width;
+    const exportHeight = cropMask ? cropMask.height : image.height;
+    const exportX = cropMask ? cropMask.x : 0;
+    const exportY = cropMask ? cropMask.y : 0;
+
+    // 创建离屏 Stage 以原始分辨率导出
+    const offscreenContainer = document.createElement("div");
+    offscreenContainer.style.position = "absolute";
+    offscreenContainer.style.left = "-9999px";
+    document.body.appendChild(offscreenContainer);
+
+    const offscreenStage = new Konva.Stage({
+      container: offscreenContainer,
+      width: exportWidth,
+      height: exportHeight,
+    });
+
+    const offscreenLayer = new Konva.Layer();
+    offscreenStage.add(offscreenLayer);
+
+    // 加载原始图片
+    return new Promise<string | null>((resolve) => {
+      const img = new window.Image();
+      img.onload = () => {
+        // 绘制背景图片（原始大小，应用裁剪偏移）
+        const konvaImg = new Konva.Image({
+          image: img,
+          x: -exportX,
+          y: -exportY,
+          width: image.width,
+          height: image.height,
+        });
+        offscreenLayer.add(konvaImg);
+
+        // 复制所有标注到离屏 Layer（原始坐标，应用裁剪偏移）
+        const layer = stage.findOne("Layer") as Konva.Layer;
+        if (layer) {
+          const annotationGroup = layer.children?.find(
+            (child) => child instanceof Konva.Group && child.children && child.children.length > 0
+          ) as Konva.Group | undefined;
+          
+          if (annotationGroup) {
+            annotationGroup.children?.forEach((child) => {
+              if (child.name() !== "background-image") {
+                const clone = child.clone();
+                // 重置缩放，应用裁剪偏移
+                clone.scaleX(1);
+                clone.scaleY(1);
+                clone.x(clone.x() - exportX);
+                clone.y(clone.y() - exportY);
+                offscreenLayer.add(clone);
+              }
+            });
+          }
+        }
+
+        offscreenLayer.draw();
+        const dataUrl = offscreenStage.toDataURL({ pixelRatio: 1 });
+        
+        // 清理
+        offscreenStage.destroy();
+        offscreenContainer.remove();
+        
+        resolve(dataUrl);
+      };
+      img.onerror = () => {
+        offscreenStage.destroy();
+        offscreenContainer.remove();
+        resolve(null);
+      };
+      img.src = image.src;
+    });
+  }, [cropMask, image, annotations]);
 
   // 保存文件
   const handleSave = async () => {
     if (!image) return;
 
     try {
-      const dataUrl = getCanvasDataUrl();
+      const dataUrl = await getCanvasDataUrl();
       if (!dataUrl) {
         alert("无法获取画布数据");
         return;
       }
 
-      // 生成默认文件名，避免覆盖源文件
+      // 生成默认文件名，根据配置的模式
       const baseName = image.name?.replace(/\.[^.]+$/, "") || "image";
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const defaultName = `${baseName}_marked_${timestamp}.png`;
+      const now = new Date();
+      const pad = (n: number) => n.toString().padStart(2, "0");
+      const timestamp = `${now.getFullYear()}_${pad(now.getMonth() + 1)}_${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+
+      let defaultName = outputPattern || "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png";
+      defaultName = defaultName
+        .replace(/{input_file_base}/g, baseName)
+        .replace(/{input_file}/g, image.path || image.name || "")
+        .replace(/{YYYY_MM_DD-hh-mm-ss}/g, timestamp);
 
       const filePath = await save({
         defaultPath: defaultName,
@@ -169,7 +293,7 @@ export function Editor() {
     if (!image) return;
 
     try {
-      const dataUrl = getCanvasDataUrl();
+      const dataUrl = await getCanvasDataUrl();
       if (!dataUrl) {
         alert("无法获取画布数据");
         return;
@@ -194,51 +318,48 @@ export function Editor() {
     }
   };
 
-  // 执行裁剪
+  // 关闭窗口处理
+  const handleClose = useCallback(async () => {
+    // 如果有图片，无论是否编辑过，都显示确认对话框
+    // 用户需求：当加载图片但是未编辑任何内容时退出 也走先问是否保存逻辑
+    if (image) {
+      setShowCloseConfirm(true);
+    } else {
+      await invoke("exit_app");
+    }
+  }, [image]);
+
+  // 确认关闭（不保存）
+  const handleConfirmClose = useCallback(async () => {
+    setShowCloseConfirm(false);
+    await invoke("exit_app");
+  }, []);
+
+  // 保存并关闭
+  const handleSaveAndClose = useCallback(async () => {
+    setShowCloseConfirm(false);
+    await handleSave();
+    await invoke("exit_app");
+  }, [handleSave]);
+
+  // 确认裁剪 - 设置蒙版而不是直接裁剪
   const handleCropConfirm = useCallback(() => {
-    if (!image || !cropArea) return;
+    if (!cropArea) return;
 
-    // 创建临时 canvas 进行裁剪
-    const canvas = document.createElement("canvas");
-    canvas.width = cropArea.width;
-    canvas.height = cropArea.height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    // 加载原图并裁剪
-    const img = new Image();
-    img.onload = () => {
-      ctx.drawImage(
-        img,
-        cropArea.x,
-        cropArea.y,
-        cropArea.width,
-        cropArea.height,
-        0,
-        0,
-        cropArea.width,
-        cropArea.height
-      );
-
-      const croppedDataUrl = canvas.toDataURL("image/png");
-      const newImageInfo: ImageInfo = {
-        src: croppedDataUrl,
-        width: cropArea.width,
-        height: cropArea.height,
-        name: image.name ? `${image.name.replace(/\.[^.]+$/, "")}_cropped.png` : "cropped.png",
-      };
-
-      // 清除标注（因为坐标已经变化）
-      clearAnnotations();
-      // 设置新图片
-      setImage(newImageInfo);
-      // 清除裁剪区域
-      setCropArea(null);
-      // 切换回选择工具
-      setCurrentTool("select");
-    };
-    img.src = image.src;
-  }, [image, cropArea, setImage, setCropArea, clearAnnotations, setCurrentTool]);
+    // 设置裁剪蒙版（保存时才真正应用）
+    pushHistory();
+    setCropMask({
+      x: cropArea.x,
+      y: cropArea.y,
+      width: cropArea.width,
+      height: cropArea.height,
+    });
+    
+    // 清除裁剪区域
+    setCropArea(null);
+    // 切换回选择工具
+    setCurrentTool("select");
+  }, [cropArea, setCropArea, setCropMask, setCurrentTool, pushHistory]);
 
   // 从剪贴板粘贴
   const handlePaste = useCallback(async () => {
@@ -273,12 +394,15 @@ export function Editor() {
             name: "clipboard-image.png",
           };
           setImage(imageInfo);
+          
+          // 自动调整窗口大小
+          await adjustWindowSize(size.width, size.height);
         }
       }
     } catch (error) {
       console.error("粘贴失败:", error);
     }
-  }, [setImage]);
+  }, [setImage, adjustWindowSize]);
 
   // 键盘快捷键
   useEffect(() => {
@@ -317,8 +441,9 @@ export function Editor() {
         return;
       }
 
-      // Delete 删除选中
-      if (e.key === "Delete" && selectedIds.length > 0) {
+      // Delete 或 Backspace 删除选中
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0) {
+        e.preventDefault();
         selectedIds.forEach((id) => deleteAnnotation(id));
         return;
       }
@@ -359,6 +484,12 @@ export function Editor() {
 
   return (
     <div className="flex flex-col w-screen h-screen bg-muted/30">
+      {/* 窗口拖动区域 */}
+      <div 
+        data-tauri-drag-region 
+        className="absolute top-0 left-0 right-0 h-8 z-50 cursor-move"
+      />
+      
       {/* 画布区域 */}
       <div ref={containerRef} className="relative flex-1 overflow-hidden">
         {containerSize.width > 0 && containerSize.height > 0 && (
@@ -374,6 +505,7 @@ export function Editor() {
           onSave={handleSave}
           onCopy={handleCopy}
           onOpenSettings={() => setShowSettings(true)}
+          onClose={handleClose}
         />
 
         {/* 工具配置面板 */}
@@ -424,6 +556,42 @@ export function Editor() {
 
       {/* 设置对话框 */}
       <SettingsDialog open={showSettings} onClose={() => setShowSettings(false)} />
+
+      {/* 关闭确认对话框 */}
+      {showCloseConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowCloseConfirm(false)}
+          />
+          <div className="relative z-10 w-full max-w-sm p-6 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-2xl">
+            <h3 className="text-lg font-semibold mb-2">确认关闭</h3>
+            <p className="text-sm text-muted-foreground mb-6">
+              您有未保存的更改，是否保存后再关闭？
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowCloseConfirm(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmClose}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors"
+              >
+                不保存关闭
+              </button>
+              <button
+                onClick={handleSaveAndClose}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors"
+              >
+                保存并关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 // Zustand 状态管理 - 编辑器核心状态
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import { generateId } from "@/lib/utils";
 import type {
   Annotation,
@@ -9,9 +10,11 @@ import type {
   ViewState,
   ImageInfo,
   CropArea,
+  CropMask,
   CustomAction,
   ToolbarOrientation,
   ThemeMode,
+  AppConfig,
 } from "@/types";
 
 /**
@@ -31,6 +34,8 @@ const defaultToolConfig: ToolConfig = {
   markerType: "number",
   markerSize: 28,
   blurRadius: 10,
+  blurCornerRadius: 10, // 马赛克圆角，默认为10
+  cornerRadius: 0, // 矩形圆角，默认为0
 };
 
 /**
@@ -85,6 +90,11 @@ interface EditorState {
   setCropArea: (area: CropArea | null) => void;
   isCropping: boolean;
   setIsCropping: (cropping: boolean) => void;
+  
+  // 裁剪蒙版（用于遮罩不需要的部分，保存时应用）
+  cropMask: CropMask | null;
+  setCropMask: (mask: CropMask | null) => void;
+  applyCropMask: () => void;
 
   // 序号标记计数器
   markerCounter: number;
@@ -108,6 +118,12 @@ interface EditorState {
   // 正在编辑文字
   editingTextId: string | null;
   setEditingTextId: (id: string | null) => void;
+
+  // 配置
+  outputPattern: string;
+  setOutputPattern: (pattern: string) => void;
+  loadConfig: () => Promise<void>;
+  saveConfig: () => Promise<void>;
 }
 
 /**
@@ -179,10 +195,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   history: [],
   historyIndex: -1,
   pushHistory: () => {
-    const { annotations, history, historyIndex } = get();
+    const { annotations, cropMask, history, historyIndex } = get();
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push({
       annotations: JSON.parse(JSON.stringify(annotations)),
+      cropMask: cropMask ? JSON.parse(JSON.stringify(cropMask)) : null,
       timestamp: Date.now(),
     });
     // 限制历史记录长度
@@ -200,6 +217,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const prevState = history[historyIndex - 1];
       set({
         annotations: JSON.parse(JSON.stringify(prevState.annotations)),
+        cropMask: prevState.cropMask ? JSON.parse(JSON.stringify(prevState.cropMask)) : null,
         historyIndex: historyIndex - 1,
         selectedIds: [],
       });
@@ -207,6 +225,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       // 撤销到初始状态（空）
       set({
         annotations: [],
+        cropMask: null,
         historyIndex: -1,
         selectedIds: [],
       });
@@ -218,6 +237,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const nextState = history[historyIndex + 1];
       set({
         annotations: JSON.parse(JSON.stringify(nextState.annotations)),
+        cropMask: nextState.cropMask ? JSON.parse(JSON.stringify(nextState.cropMask)) : null,
         historyIndex: historyIndex + 1,
         selectedIds: [],
       });
@@ -246,6 +266,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setCropArea: (area) => set({ cropArea: area }),
   isCropping: false,
   setIsCropping: (cropping) => set({ isCropping: cropping }),
+  
+  // 裁剪蒙版（用于遮罩不需要的部分，保存时应用）
+  cropMask: null,
+  setCropMask: (mask) => set({ cropMask: mask }),
+  applyCropMask: () => {
+    // 应用裁剪蒙版时记录历史
+    get().pushHistory();
+  },
 
   // 序号标记计数器
   markerCounter: 1,
@@ -255,12 +283,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   // 自定义动作
   customActions: [],
-  setCustomActions: (actions) => set({ customActions: actions }),
+  setCustomActions: (actions) => {
+    set({ customActions: actions });
+    get().saveConfig();
+  },
 
   // UI 状态
   toolbarOrientation: "horizontal",
   setToolbarOrientation: (orientation) => set({ toolbarOrientation: orientation }),
-  theme: "system",
+  theme: "auto",
   setTheme: (theme) => {
     set({ theme });
     // 应用主题
@@ -270,7 +301,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } else if (theme === "light") {
       root.classList.remove("dark");
     } else {
-      // system
+      // auto
       const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
       if (prefersDark) {
         root.classList.add("dark");
@@ -278,6 +309,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         root.classList.remove("dark");
       }
     }
+    get().saveConfig();
   },
 
   // 正在绘制
@@ -287,6 +319,58 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // 正在编辑文字
   editingTextId: null,
   setEditingTextId: (id) => set({ editingTextId: id }),
+
+  // 配置
+  outputPattern: "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png",
+  setOutputPattern: (pattern) => {
+    set({ outputPattern: pattern });
+    get().saveConfig();
+  },
+
+  loadConfig: async () => {
+    try {
+      const config = await invoke<AppConfig>("get_config");
+      set({ 
+        theme: config.theme, 
+        outputPattern: config.output_pattern,
+        customActions: config.custom_actions 
+      });
+      
+      // 应用加载的主题（但不触发 saveConfig）
+      const root = document.documentElement;
+      const theme = config.theme;
+      if (theme === "dark") {
+        root.classList.add("dark");
+      } else if (theme === "light") {
+        root.classList.remove("dark");
+      } else {
+        // auto
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (prefersDark) {
+          root.classList.add("dark");
+        } else {
+          root.classList.remove("dark");
+        }
+      }
+    } catch (error) {
+      console.error("加载配置失败:", error);
+    }
+  },
+
+  saveConfig: async () => {
+    const { theme, outputPattern, customActions } = get();
+    try {
+      await invoke("save_config", {
+        config: {
+          theme,
+          output_pattern: outputPattern,
+          custom_actions: customActions,
+        }
+      });
+    } catch (error) {
+      console.error("保存配置失败:", error);
+    }
+  },
 }));
 
 /**
@@ -318,6 +402,7 @@ export function createAnnotation(
         strokeWidth: config.strokeWidth,
         fill: config.fillColor,
         fillOpacity: config.fillOpacity,
+        cornerRadius: config.cornerRadius,
       };
       return extra ? { ...rect, ...extra } as Annotation : rect;
     }
@@ -404,6 +489,7 @@ export function createAnnotation(
         width: 0,
         height: 0,
         blurRadius: config.blurRadius,
+        cornerRadius: config.blurCornerRadius,
       };
       return extra ? { ...blur, ...extra } as Annotation : blur;
     }

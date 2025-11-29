@@ -147,6 +147,7 @@ export interface BlurAnnotation extends BaseAnnotation {
   width: number;
   height: number;
   blurRadius: number;
+  cornerRadius: number;
 }
 
 /**
@@ -188,6 +189,20 @@ export interface ToolConfig {
 
   // 模糊
   blurRadius: number;
+  blurCornerRadius: number;
+  
+  // 矩形圆角
+  cornerRadius: number;
+}
+
+/**
+ * 裁剪蒙版（用于遮罩不需要的部分）
+ */
+export interface CropMask {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /**
@@ -195,6 +210,7 @@ export interface ToolConfig {
  */
 export interface HistoryState {
   annotations: Annotation[];
+  cropMask: CropMask | null;
   timestamp: number;
 }
 
@@ -234,6 +250,7 @@ export interface ImageInfo {
   width: number;
   height: number;
   name?: string;
+  path?: string; // 原始文件路径
 }
 
 /**
@@ -244,4 +261,13 @@ export type ToolbarOrientation = "horizontal" | "vertical";
 /**
  * 主题模式
  */
-export type ThemeMode = "light" | "dark" | "system";
+export type ThemeMode = "light" | "dark" | "auto";
+
+/**
+ * 应用配置
+ */
+export interface AppConfig {
+  theme: ThemeMode;
+  output_pattern: string;
+  custom_actions: CustomAction[];
+}

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 
 interface CustomActionsPanelProps {
-  getCanvasDataUrl: () => string | null;
+  getCanvasDataUrl: () => Promise<string | null>;
 }
 
 // 图标映射
@@ -35,7 +35,7 @@ export function CustomActionsPanel({ getCanvasDataUrl }: CustomActionsPanelProps
 
   // 执行自定义动作
   const handleExecute = async (index: number) => {
-    const dataUrl = getCanvasDataUrl();
+    const dataUrl = await getCanvasDataUrl();
     if (!dataUrl) {
       alert("无法获取画布数据");
       return;

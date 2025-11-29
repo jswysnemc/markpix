@@ -27,10 +27,25 @@ pub struct CustomAction {
 }
 
 /// 应用配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
+    /// 主题设置: light, dark, auto
+    pub theme: String,
+    /// 输出文件命名模式
+    pub output_pattern: String,
     /// 自定义动作列表
     pub custom_actions: Vec<CustomAction>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            theme: "auto".to_string(),
+            output_pattern: "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png".to_string(),
+            custom_actions: vec![],
+        }
+    }
 }
 
 impl AppConfig {
@@ -40,6 +55,9 @@ impl AppConfig {
         if config_path.exists() {
             if let Ok(content) = fs::read_to_string(&config_path) {
                 if let Ok(config) = toml::from_str(&content) {
+                    // 确保缺失字段使用默认值（如果 toml 中没有）
+                    // 这里简化处理，如果结构体字段增加，旧配置可能缺少字段
+                    // 生产环境应该手动合并默认值
                     return config;
                 }
             }
@@ -48,6 +66,25 @@ impl AppConfig {
         let default_config = Self::default_with_examples();
         let _ = default_config.save();
         default_config
+    }
+
+    /// 创建带示例的默认配置
+    fn default_with_examples() -> Self {
+        let mut config = Self::default();
+        config.custom_actions = vec![
+            CustomAction {
+                name: "打开所在文件夹".to_string(),
+                command: if cfg!(target_os = "windows") {
+                    "explorer /select, \"{file}\"".to_string()
+                } else if cfg!(target_os = "macos") {
+                    "open -R \"{file}\"".to_string()
+                } else {
+                    "xdg-open \"$(dirname \"{file}\")\"".to_string()
+                },
+                icon: Some("folder".to_string()),
+            },
+        ];
+        config
     }
 
     /// 保存配置到文件
@@ -67,24 +104,6 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("markpix")
             .join("config.toml")
-    }
-
-    /// 带示例的默认配置
-    fn default_with_examples() -> Self {
-        Self {
-            custom_actions: vec![
-                CustomAction {
-                    name: "OCR 识别".to_string(),
-                    command: "echo '图片路径: {file}'".to_string(),
-                    icon: Some("scan".to_string()),
-                },
-                CustomAction {
-                    name: "上传到图床".to_string(),
-                    command: "echo '上传: {file}'".to_string(),
-                    icon: Some("upload".to_string()),
-                },
-            ],
-        }
     }
 }
 
@@ -285,6 +304,24 @@ fn open_directory(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn save_config(app_state: State<AppState>, config: AppConfig) -> Result<(), String> {
+    let mut state_config = app_state.config.lock().map_err(|e| e.to_string())?;
+    *state_config = config;
+    state_config.save()
+}
+
+#[tauri::command]
+fn get_config(app_state: State<AppState>) -> Result<AppConfig, String> {
+    Ok(app_state.config.lock().map_err(|e| e.to_string())?.clone())
+}
+
+/// 退出应用程序
+#[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     run_with_args(None)
@@ -314,6 +351,9 @@ pub fn run_with_args(initial_image: Option<String>) {
             get_config_path,
             copy_image_to_clipboard,
             open_directory,
+            exit_app,
+            save_config,
+            get_config,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用时发生错误");

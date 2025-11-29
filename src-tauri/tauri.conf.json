@@ -12,13 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "MarkPix - 图片标注工具",
+        "title": "MarkPix",
         "width": 1200,
         "height": 800,
         "minWidth": 900,
         "minHeight": 120,
         "center": true,
-        "decorations": true,
+        "decorations": false,
         "transparent": false,
         "resizable": true
       }

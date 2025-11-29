@@ -25,6 +25,7 @@ export function AnnotationCanvas({
   const {
     image,
     currentTool,
+    setCurrentTool,
     toolConfig,
     annotations,
     addAnnotation,
@@ -43,6 +44,8 @@ export function AnnotationCanvas({
     setCropArea,
     isCropping,
     setIsCropping,
+    cropMask,
+    editingTextId,
   } = useEditorStore();
 
   // 加载图片
@@ -56,8 +59,14 @@ export function AnnotationCanvas({
   // 绘制起始点
   const startPointRef = useRef<{ x: number; y: number } | null>(null);
   
+  // 文字工具防抖
+  const lastTextCreateTimeRef = useRef<number>(0);
+  
   // 裁剪等待第二次点击的标记
   const cropWaitingSecondClickRef = useRef(false);
+  
+  // 用于 requestAnimationFrame 节流
+  const rafRef = useRef<number | null>(null);
 
   // 计算图片适应容器的缩放和位置
   const getImageFit = useCallback(() => {
@@ -111,11 +120,28 @@ export function AnnotationCanvas({
   // 处理鼠标按下
   const handleMouseDown = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
+      // 如果正在编辑文字，不处理（让 blur 事件先触发）
+      if (editingTextId) return;
+      
       // 如果点击的是 Transformer 的锚点，不处理
       if (e.target.getParent()?.className === "Transformer") return;
 
       const pos = getPointerPosition();
       if (!pos) return;
+
+      // 鼠标中键平移（任何工具下都可用）
+      if (e.evt.button === 1) {
+        e.evt.preventDefault();
+        isPanningRef.current = true;
+        const stage = stageRef.current;
+        if (stage) {
+          const stagePos = stage.getPointerPosition();
+          if (stagePos) {
+            lastPanPosRef.current = stagePos;
+          }
+        }
+        return;
+      }
 
       // 手型工具 - 开始平移
       if (currentTool === "pan") {
@@ -167,6 +193,14 @@ export function AnnotationCanvas({
           // 点击已有文字，不创建新的，让 RenderAnnotation 处理双击编辑
           return;
         }
+        
+        // 防抖：300ms 内不允许重复创建
+        const now = Date.now();
+        if (now - lastTextCreateTimeRef.current < 300) {
+          return;
+        }
+        lastTextCreateTimeRef.current = now;
+        
         const newAnnotation = createAnnotation(currentTool, toolConfig, pos, {
           text: "双击编辑",
         });
@@ -241,13 +275,14 @@ export function AnnotationCanvas({
       setCropArea,
       cropArea,
       isCropping,
+      editingTextId,
     ]
   );
 
-  // 处理鼠标移动
-  const handleMouseMove = useCallback(() => {
-    // 处理平移
-    if (isPanningRef.current && currentTool === "pan") {
+  // 处理鼠标移动（使用 RAF 节流提升性能）
+  const handleMouseMoveInternal = useCallback(() => {
+    // 处理平移（手型工具或鼠标中键）
+    if (isPanningRef.current) {
       const stage = stageRef.current;
       if (!stage) return;
 
@@ -330,6 +365,25 @@ export function AnnotationCanvas({
         break;
     }
   }, [isDrawing, drawingAnnotation, getPointerPosition, currentTool, viewState.offsetX, viewState.offsetY, setViewState, setCropArea]);
+
+  // 使用 requestAnimationFrame 节流的鼠标移动处理
+  const handleMouseMove = useCallback(() => {
+    if (rafRef.current !== null) return;
+    
+    rafRef.current = requestAnimationFrame(() => {
+      handleMouseMoveInternal();
+      rafRef.current = null;
+    });
+  }, [handleMouseMoveInternal]);
+
+  // 清理 RAF
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, []);
 
   // 处理鼠标松开
   const handleMouseUp = useCallback(() => {
@@ -517,6 +571,15 @@ export function AnnotationCanvas({
     }
   };
 
+  // 右键切换到选择工具
+  const handleContextMenu = useCallback(
+    (e: Konva.KonvaEventObject<PointerEvent>) => {
+      e.evt.preventDefault();
+      setCurrentTool("select");
+    },
+    [setCurrentTool]
+  );
+
   if (!image || !loadedImage) {
     return (
       <div className="flex items-center justify-center w-full h-full text-muted-foreground">
@@ -535,7 +598,9 @@ export function AnnotationCanvas({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onWheel={handleWheel}
+      onContextMenu={handleContextMenu}
       style={{ cursor: getCursor() }}
+      perfectDrawEnabled={false}
     >
       <Layer ref={layerRef}>
         {/* 背景图片 */}
@@ -548,6 +613,8 @@ export function AnnotationCanvas({
           height={image.height}
           scaleX={imageFit.scale * viewState.scale}
           scaleY={imageFit.scale * viewState.scale}
+          perfectDrawEnabled={false}
+          listening={false}
         />
 
         {/* 标注层 - 使用 Group 来应用变换 */}
@@ -629,6 +696,56 @@ export function AnnotationCanvas({
               stroke="#3b82f6"
               strokeWidth={2 / (imageFit.scale * viewState.scale)}
               dash={[5, 5]}
+            />
+          </Group>
+        )}
+
+        {/* 裁剪蒙版（已确认的裁剪区域） */}
+        {cropMask && (
+          <Group
+            x={imageFit.x + viewState.offsetX}
+            y={imageFit.y + viewState.offsetY}
+            scaleX={imageFit.scale * viewState.scale}
+            scaleY={imageFit.scale * viewState.scale}
+          >
+            {/* 裁剪蒙版外的遮罩 - 半透明黑色 */}
+            <Rect
+              x={-10000}
+              y={-10000}
+              width={20000}
+              height={cropMask.y + 10000}
+              fill="rgba(0,0,0,0.6)"
+            />
+            <Rect
+              x={-10000}
+              y={cropMask.y + cropMask.height}
+              width={20000}
+              height={10000}
+              fill="rgba(0,0,0,0.6)"
+            />
+            <Rect
+              x={-10000}
+              y={cropMask.y}
+              width={cropMask.x + 10000}
+              height={cropMask.height}
+              fill="rgba(0,0,0,0.6)"
+            />
+            <Rect
+              x={cropMask.x + cropMask.width}
+              y={cropMask.y}
+              width={10000}
+              height={cropMask.height}
+              fill="rgba(0,0,0,0.6)"
+            />
+            {/* 裁剪蒙版边框 - 绿色表示已确认 */}
+            <Rect
+              x={cropMask.x}
+              y={cropMask.y}
+              width={cropMask.width}
+              height={cropMask.height}
+              stroke="#22c55e"
+              strokeWidth={2 / (imageFit.scale * viewState.scale)}
+              dash={[8, 4]}
             />
           </Group>
         )}

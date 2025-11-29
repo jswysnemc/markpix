@@ -89,21 +89,21 @@ export function Slider({
         step={step}
         className={cn(
           "flex-1 h-2 min-w-[60px] rounded-full appearance-none cursor-pointer",
-          "bg-gray-300 dark:bg-gray-600",
+          "bg-gray-200 dark:bg-gray-700", // 深色模式下轨道颜色更深
           "[&::-webkit-slider-thumb]:appearance-none",
           "[&::-webkit-slider-thumb]:w-4",
           "[&::-webkit-slider-thumb]:h-4",
           "[&::-webkit-slider-thumb]:rounded-full",
-          "[&::-webkit-slider-thumb]:bg-blue-500",
+          "[&::-webkit-slider-thumb]:bg-blue-500 dark:[&::-webkit-slider-thumb]:bg-blue-400", // 深色模式下滑块颜色稍亮
           "[&::-webkit-slider-thumb]:shadow-md",
           "[&::-webkit-slider-thumb]:hover:scale-110",
           "[&::-webkit-slider-thumb]:transition-transform",
           "[&::-moz-range-thumb]:w-4",
           "[&::-moz-range-thumb]:h-4",
           "[&::-moz-range-thumb]:rounded-full",
-          "[&::-moz-range-thumb]:bg-blue-500",
+          "[&::-moz-range-thumb]:bg-blue-500 dark:[&::-moz-range-thumb]:bg-blue-400",
           "[&::-moz-range-thumb]:border-0",
-          "[&::-moz-range-track]:bg-gray-300 dark:bg-gray-600",
+          "[&::-moz-range-track]:bg-gray-200 dark:bg-gray-700",
           "[&::-moz-range-track]:rounded-full",
           "[&::-moz-range-track]:h-2"
         )}
@@ -117,15 +117,15 @@ export function Slider({
             onChange={(e) => setInputValue(e.target.value)}
             onBlur={endEditing}
             onKeyDown={handleKeyDown}
-            className="w-10 text-xs text-center bg-muted border border-border rounded px-1 py-0.5 tabular-nums"
+            className="w-10 text-xs text-center bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 tabular-nums"
             autoFocus
           />
         ) : (
           <span
             onClick={startEditing}
             className={cn(
-              "text-xs text-muted-foreground w-10 text-center tabular-nums rounded px-1 py-0.5",
-              editable && "cursor-pointer hover:bg-muted"
+              "text-xs text-gray-500 dark:text-gray-400 w-10 text-center tabular-nums rounded px-1 py-0.5",
+              editable && "cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800"
             )}
             title={editable ? "点击编辑" : undefined}
           >

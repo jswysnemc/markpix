@@ -20,6 +20,50 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
   const renderConfig = () => {
     switch (currentTool) {
       case "rectangle":
+        return (
+          <>
+            <ConfigItem label="边框颜色" isHorizontal={isHorizontal}>
+              <ColorPicker
+                value={toolConfig.strokeColor}
+                onChange={(color) => setToolConfig({ strokeColor: color })}
+              />
+            </ConfigItem>
+            <ConfigItem label="填充颜色" isHorizontal={isHorizontal}>
+              <ColorPicker
+                value={toolConfig.fillColor}
+                onChange={(color) => setToolConfig({ fillColor: color })}
+              />
+            </ConfigItem>
+            <ConfigItem label="边框粗细" isHorizontal={isHorizontal}>
+              <Slider
+                value={toolConfig.strokeWidth}
+                onChange={(v) => setToolConfig({ strokeWidth: v })}
+                min={1}
+                max={20}
+                className="w-24"
+              />
+            </ConfigItem>
+            <ConfigItem label="填充透明度" isHorizontal={isHorizontal}>
+              <Slider
+                value={toolConfig.fillOpacity * 100}
+                onChange={(v) => setToolConfig({ fillOpacity: v / 100 })}
+                min={0}
+                max={100}
+                className="w-24"
+              />
+            </ConfigItem>
+            <ConfigItem label="圆角" isHorizontal={isHorizontal}>
+              <Slider
+                value={toolConfig.cornerRadius}
+                onChange={(v) => setToolConfig({ cornerRadius: v })}
+                min={0}
+                max={50}
+                className="w-24"
+              />
+            </ConfigItem>
+          </>
+        );
+
       case "ellipse":
         return (
           <>
@@ -210,6 +254,15 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
                 className="w-24"
               />
             </ConfigItem>
+            <ConfigItem label="圆角" isHorizontal={isHorizontal}>
+              <Slider
+                value={toolConfig.blurCornerRadius}
+                onChange={(v) => setToolConfig({ blurCornerRadius: v })}
+                min={0}
+                max={50}
+                className="w-24"
+              />
+            </ConfigItem>
           </>
         );
 
@@ -245,7 +298,7 @@ function ConfigItem({ label, children, isHorizontal }: ConfigItemProps) {
         isHorizontal ? "flex-row items-center" : "flex-col"
       )}
     >
-      <span className="text-xs text-muted-foreground whitespace-nowrap">
+      <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap font-medium">
         {label}
       </span>
       {children}
