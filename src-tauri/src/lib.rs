@@ -9,10 +9,12 @@ use std::process::Command;
 use std::sync::Mutex;
 use tauri::State;
 
-/// 应用状态：存储 CLI 传入的初始图片路径
+/// 应用状态：存储 CLI 传入的参数
 pub struct AppState {
     pub initial_image_path: Mutex<Option<String>>,
     pub config: Mutex<AppConfig>,
+    pub cli_config_path: Mutex<Option<String>>,
+    pub cli_output_pattern: Mutex<Option<String>>,
 }
 
 /// 自定义动作配置
@@ -49,15 +51,21 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    /// 从配置文件加载
+    /// 从默认配置文件加载
     pub fn load() -> Self {
-        let config_path = Self::config_path();
+        Self::load_from_path(&Self::config_path())
+    }
+
+    /// 从指定路径加载配置
+    pub fn load_from(path: &str) -> Self {
+        Self::load_from_path(&PathBuf::from(path))
+    }
+
+    /// 从指定路径加载配置（内部方法）
+    fn load_from_path(config_path: &PathBuf) -> Self {
         if config_path.exists() {
-            if let Ok(content) = fs::read_to_string(&config_path) {
+            if let Ok(content) = fs::read_to_string(config_path) {
                 if let Ok(config) = toml::from_str(&content) {
-                    // 确保缺失字段使用默认值（如果 toml 中没有）
-                    // 这里简化处理，如果结构体字段增加，旧配置可能缺少字段
-                    // 生产环境应该手动合并默认值
                     return config;
                 }
             }
@@ -163,11 +171,18 @@ fn get_custom_actions(state: State<AppState>) -> Vec<CustomAction> {
     state.config.lock().unwrap().custom_actions.clone()
 }
 
+/// 获取 CLI 指定的输出模式
+#[tauri::command]
+fn get_cli_output_pattern(state: State<AppState>) -> Option<String> {
+    state.cli_output_pattern.lock().unwrap().clone()
+}
+
 /// 执行自定义动作
 #[tauri::command]
 fn execute_custom_action(
     action_index: usize,
-    image_data: String,
+    image_path: Option<String>,
+    image_data: Option<String>,
     state: State<AppState>,
 ) -> Result<String, String> {
     let config = state.config.lock().unwrap();
@@ -178,38 +193,64 @@ fn execute_custom_action(
         .clone();
     drop(config);
 
-    // 创建临时文件
-    let temp_dir = tempfile::tempdir().map_err(|e| format!("创建临时目录失败: {}", e))?;
-    let temp_path = temp_dir.path().join("markpix-temp.png");
+    // 确定图片路径
+    let file_path = if let Some(path) = image_path {
+        // 使用已有的图片路径
+        path
+    } else if let Some(data) = image_data {
+        // 从 base64 数据创建临时文件
+        let temp_dir = std::env::temp_dir().join("markpix");
+        fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
+        
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let temp_path = temp_dir.join(format!("markpix-{}.png", timestamp));
 
-    // 保存图片到临时文件
-    let base64_data = image_data
-        .split(',')
-        .nth(1)
-        .ok_or("无效的图片数据格式")?;
-    let bytes = STANDARD
-        .decode(base64_data)
-        .map_err(|e| format!("Base64 解码失败: {}", e))?;
-    fs::write(&temp_path, bytes).map_err(|e| format!("保存临时文件失败: {}", e))?;
+        let base64_data = data
+            .split(',')
+            .nth(1)
+            .ok_or("无效的图片数据格式")?;
+        let bytes = STANDARD
+            .decode(base64_data)
+            .map_err(|e| format!("Base64 解码失败: {}", e))?;
+        fs::write(&temp_path, &bytes).map_err(|e| format!("保存临时文件失败: {}", e))?;
+        
+        temp_path.to_string_lossy().to_string()
+    } else {
+        return Err("需要提供图片路径或图片数据".to_string());
+    };
 
     // 替换命令中的 {file} 占位符
-    let command = action.command.replace("{file}", temp_path.to_str().unwrap_or(""));
+    let command = action.command.replace("{file}", &file_path);
 
-    // 执行 Shell 命令
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .output()
-        .map_err(|e| format!("执行命令失败: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if output.status.success() {
-        Ok(stdout)
-    } else {
-        Err(format!("命令执行失败:\n{}\n{}", stdout, stderr))
+    // 使用 spawn 启动独立子进程，不等待完成
+    // 这样子进程被杀掉不会影响主进程
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", &command])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("执行命令失败: {}", e))?;
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 使用 nohup 和 & 在后台运行，脱离父进程
+        let bg_command = format!("nohup sh -c '{}' >/dev/null 2>&1 &", command.replace("'", "'\"'\"'"));
+        Command::new("sh")
+            .args(["-c", &bg_command])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("执行命令失败: {}", e))?;
+    }
+
+    Ok(format!("已启动: {}", action.name))
 }
 
 /// 重新加载配置
@@ -324,14 +365,27 @@ fn exit_app(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    run_with_args(None)
+    run_with_args(None, None, None)
 }
 
 /// 带参数运行（供 main.rs 调用）
-pub fn run_with_args(initial_image: Option<String>) {
+pub fn run_with_args(
+    initial_image: Option<String>,
+    config_path: Option<String>,
+    output_pattern: Option<String>,
+) {
+    // 加载配置（优先使用 CLI 指定的配置文件）
+    let config = if let Some(ref path) = config_path {
+        AppConfig::load_from(path)
+    } else {
+        AppConfig::load()
+    };
+
     let app_state = AppState {
         initial_image_path: Mutex::new(initial_image),
-        config: Mutex::new(AppConfig::load()),
+        config: Mutex::new(config),
+        cli_config_path: Mutex::new(config_path),
+        cli_output_pattern: Mutex::new(output_pattern),
     };
 
     tauri::Builder::default()
@@ -346,6 +400,7 @@ pub fn run_with_args(initial_image: Option<String>) {
             read_image_file,
             save_image_file,
             get_custom_actions,
+            get_cli_output_pattern,
             execute_custom_action,
             reload_config,
             get_config_path,

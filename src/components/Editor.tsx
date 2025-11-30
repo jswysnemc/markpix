@@ -25,6 +25,7 @@ export function Editor() {
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [showSettings, setShowSettings] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showOpenConfirm, setShowOpenConfirm] = useState(false);
 
   const {
     image,
@@ -139,6 +140,16 @@ export function Editor() {
 
   // 打开文件
   const handleOpenFile = async () => {
+    // 如果当前有图片，先询问是否保存
+    if (image) {
+      setShowOpenConfirm(true);
+    } else {
+      await doOpenFile();
+    }
+  };
+
+  // 实际执行打开文件
+  const doOpenFile = async () => {
     try {
       const selected = await open({
         multiple: false,
@@ -151,12 +162,22 @@ export function Editor() {
       });
 
       if (selected) {
+        // 清除当前状态
+        useEditorStore.getState().clearAnnotations();
+        useEditorStore.getState().setCropMask(null);
+        useEditorStore.getState().resetMarkerCounter();
         await loadImageFromPath(selected);
       }
     } catch (error) {
       console.error("打开文件失败:", error);
     }
   };
+
+  // 确认打开新文件（不保存当前）
+  const handleConfirmOpen = useCallback(async () => {
+    setShowOpenConfirm(false);
+    await doOpenFile();
+  }, []);
 
   // 获取画布数据 URL（应用裁剪蒙版，保持原始图片大小）
   const getCanvasDataUrl = useCallback(async (): Promise<string | null> => {
@@ -288,6 +309,56 @@ export function Editor() {
     }
   };
 
+  // 保存当前并打开新文件
+  const handleSaveAndOpen = useCallback(async () => {
+    setShowOpenConfirm(false);
+    await handleSave();
+    await doOpenFile();
+  }, []);
+
+  // 插入图片（作为贴图）
+  const handleInsertImage = async () => {
+    if (!image) return;
+    
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "图片",
+            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+          },
+        ],
+      });
+
+      if (selected) {
+        // 读取图片文件
+        const imageData = await invoke<string>("read_image_file", { path: selected });
+        
+        // 创建 Image 对象获取尺寸
+        const img = new window.Image();
+        img.src = imageData;
+        await new Promise((resolve) => { img.onload = resolve; });
+        
+        // 添加为贴图标注
+        const { addAnnotation, pushHistory } = useEditorStore.getState();
+        const imageAnnotation = {
+          id: `image-${Date.now()}`,
+          type: "image" as const,
+          x: 50,
+          y: 50,
+          width: img.width,
+          height: img.height,
+          src: imageData,
+        };
+        addAnnotation(imageAnnotation);
+        pushHistory();
+      }
+    } catch (error) {
+      console.error("插入图片失败:", error);
+    }
+  };
+
   // 复制到剪贴板 - 通过临时文件方式
   const handleCopy = async () => {
     if (!image) return;
@@ -387,22 +458,39 @@ export function Editor() {
 
           const dataUrl = canvas.toDataURL("image/png");
 
-          const imageInfo: ImageInfo = {
-            src: dataUrl,
-            width: size.width,
-            height: size.height,
-            name: "clipboard-image.png",
-          };
-          setImage(imageInfo);
-          
-          // 自动调整窗口大小
-          await adjustWindowSize(size.width, size.height);
+          // 如果已有背景图，则作为贴图添加
+          if (image) {
+            const { addAnnotation, pushHistory } = useEditorStore.getState();
+            const imageAnnotation = {
+              id: `image-${Date.now()}`,
+              type: "image" as const,
+              x: 50,
+              y: 50,
+              width: size.width,
+              height: size.height,
+              src: dataUrl,
+            };
+            addAnnotation(imageAnnotation);
+            pushHistory();
+          } else {
+            // 首次粘贴，设置为背景图
+            const imageInfo: ImageInfo = {
+              src: dataUrl,
+              width: size.width,
+              height: size.height,
+              name: "clipboard-image.png",
+            };
+            setImage(imageInfo);
+            
+            // 自动调整窗口大小
+            await adjustWindowSize(size.width, size.height);
+          }
         }
       }
     } catch (error) {
       console.error("粘贴失败:", error);
     }
-  }, [setImage, adjustWindowSize]);
+  }, [image, setImage, adjustWindowSize]);
 
   // 键盘快捷键
   useEffect(() => {
@@ -506,13 +594,14 @@ export function Editor() {
           onCopy={handleCopy}
           onOpenSettings={() => setShowSettings(true)}
           onClose={handleClose}
+          onInsertImage={handleInsertImage}
         />
 
         {/* 工具配置面板 */}
         <FloatingToolConfig />
 
         {/* 自定义动作面板 */}
-        {image && <CustomActionsPanel getCanvasDataUrl={getCanvasDataUrl} />}
+        {image && <CustomActionsPanel getCanvasDataUrl={getCanvasDataUrl} imagePath={image?.path} />}
 
         {/* 欢迎提示 */}
         {!image && (
@@ -587,6 +676,42 @@ export function Editor() {
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors"
               >
                 保存并关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 打开新文件确认对话框 */}
+      {showOpenConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowOpenConfirm(false)}
+          />
+          <div className="relative z-10 w-full max-w-sm p-6 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-2xl">
+            <h3 className="text-lg font-semibold mb-2">打开新文件</h3>
+            <p className="text-sm text-muted-foreground mb-6">
+              当前图片尚未保存，是否保存后再打开新文件？
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowOpenConfirm(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmOpen}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors"
+              >
+                不保存打开
+              </button>
+              <button
+                onClick={handleSaveAndOpen}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors"
+              >
+                保存并打开
               </button>
             </div>
           </div>

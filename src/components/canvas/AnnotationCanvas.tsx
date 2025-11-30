@@ -67,6 +67,16 @@ export function AnnotationCanvas({
   
   // 用于 requestAnimationFrame 节流
   const rafRef = useRef<number | null>(null);
+  
+  // 框选状态
+  const [selectionRect, setSelectionRect] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const isSelectingRef = useRef(false);
+  const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // 计算图片适应容器的缩放和位置
   const getImageFit = useCallback(() => {
@@ -158,9 +168,16 @@ export function AnnotationCanvas({
 
       // 选择工具
       if (currentTool === "select") {
-        // 点击空白区域取消选中
+        // 点击空白区域
         if (e.target === e.target.getStage() || e.target.name() === "background-image") {
-          clearSelection();
+          // 开始框选
+          isSelectingRef.current = true;
+          selectionStartRef.current = pos;
+          setSelectionRect({ x: pos.x, y: pos.y, width: 0, height: 0 });
+          // 如果没有按 Ctrl，清除之前的选择
+          if (!e.evt.ctrlKey && !e.evt.metaKey) {
+            clearSelection();
+          }
         }
         return;
       }
@@ -301,6 +318,20 @@ export function AnnotationCanvas({
       return;
     }
 
+    // 处理框选
+    if (isSelectingRef.current && selectionStartRef.current) {
+      const pos = getPointerPosition();
+      if (!pos) return;
+      const startPos = selectionStartRef.current;
+      setSelectionRect({
+        x: Math.min(startPos.x, pos.x),
+        y: Math.min(startPos.y, pos.y),
+        width: Math.abs(pos.x - startPos.x),
+        height: Math.abs(pos.y - startPos.y),
+      });
+      return;
+    }
+
     // 处理裁剪 - 拖动模式或点击模式的预览
     if (currentTool === "crop" && startPointRef.current) {
       const pos = getPointerPosition();
@@ -393,6 +424,82 @@ export function AnnotationCanvas({
       lastPanPosRef.current = null;
     }
 
+    // 结束框选
+    if (isSelectingRef.current && selectionRect) {
+      isSelectingRef.current = false;
+      selectionStartRef.current = null;
+      
+      // 找出框选范围内的标注
+      if (selectionRect.width > 5 && selectionRect.height > 5) {
+        const selectedAnnotations = annotations.filter((annotation) => {
+          // 获取标注的边界框
+          let ax = annotation.x;
+          let ay = annotation.y;
+          let aw = 0;
+          let ah = 0;
+          
+          switch (annotation.type) {
+            case "rectangle":
+            case "blur":
+            case "image":
+              aw = (annotation as { width: number }).width;
+              ah = (annotation as { height: number }).height;
+              break;
+            case "ellipse":
+              const rx = (annotation as { radiusX: number }).radiusX;
+              const ry = (annotation as { radiusY: number }).radiusY;
+              ax = annotation.x - rx;
+              ay = annotation.y - ry;
+              aw = rx * 2;
+              ah = ry * 2;
+              break;
+            case "text":
+            case "marker":
+              // 文字和标记使用固定大小估算
+              aw = 100;
+              ah = 30;
+              break;
+            case "arrow":
+            case "line":
+            case "brush":
+              // 线条类型使用 points 计算边界
+              const points = (annotation as { points: number[] }).points;
+              if (points.length >= 4) {
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (let i = 0; i < points.length; i += 2) {
+                  minX = Math.min(minX, points[i]);
+                  maxX = Math.max(maxX, points[i]);
+                  minY = Math.min(minY, points[i + 1]);
+                  maxY = Math.max(maxY, points[i + 1]);
+                }
+                ax = annotation.x + minX;
+                ay = annotation.y + minY;
+                aw = maxX - minX;
+                ah = maxY - minY;
+              }
+              break;
+          }
+          
+          // 检查是否与选择框相交
+          const sx = selectionRect.x;
+          const sy = selectionRect.y;
+          const sw = selectionRect.width;
+          const sh = selectionRect.height;
+          
+          return !(ax + aw < sx || ax > sx + sw || ay + ah < sy || ay > sy + sh);
+        });
+        
+        if (selectedAnnotations.length > 0) {
+          const newIds = selectedAnnotations.map(a => a.id);
+          // 合并已选中的（如果按住 Ctrl）
+          setSelectedIds([...new Set([...selectedIds, ...newIds])]);
+        }
+      }
+      
+      setSelectionRect(null);
+      return;
+    }
+
     // 结束裁剪拖动（但保留裁剪区域显示，等待确认）
     if (isCropping && currentTool === "crop") {
       setIsCropping(false);
@@ -446,7 +553,7 @@ export function AnnotationCanvas({
 
     setDrawingAnnotation(null);
     startPointRef.current = null;
-  }, [isDrawing, drawingAnnotation, addAnnotation, setIsDrawing, isCropping, currentTool, cropArea, setIsCropping, setCropArea]);
+  }, [isDrawing, drawingAnnotation, addAnnotation, setIsDrawing, isCropping, currentTool, cropArea, setIsCropping, setCropArea, selectionRect, annotations, selectedIds, setSelectedIds]);
 
   // 处理滚轮缩放
   const handleWheel = useCallback(
@@ -497,15 +604,18 @@ export function AnnotationCanvas({
 
       e.cancelBubble = true;
 
-      // Shift 多选 (仅鼠标事件支持)
-      const isShiftKey = "shiftKey" in e.evt && e.evt.shiftKey;
-      if (isShiftKey) {
+      // Ctrl/Cmd 或 Shift 多选 (仅鼠标事件支持)
+      const isMultiSelectKey = "ctrlKey" in e.evt && (e.evt.ctrlKey || e.evt.metaKey || e.evt.shiftKey);
+      if (isMultiSelectKey) {
         if (selectedIds.includes(id)) {
+          // 已选中则取消选中
           setSelectedIds(selectedIds.filter((sid) => sid !== id));
         } else {
+          // 未选中则添加到选择
           setSelectedIds([...selectedIds, id]);
         }
       } else {
+        // 单选
         setSelectedIds([id]);
       }
     },
@@ -535,6 +645,7 @@ export function AnnotationCanvas({
       switch (annotation.type) {
         case "rectangle":
         case "blur":
+        case "image":
           updates.width =
             (annotation as { width: number }).width * scaleX;
           updates.height =
@@ -746,6 +857,27 @@ export function AnnotationCanvas({
               stroke="#22c55e"
               strokeWidth={2 / (imageFit.scale * viewState.scale)}
               dash={[8, 4]}
+            />
+          </Group>
+        )}
+
+        {/* 框选矩形 */}
+        {selectionRect && selectionRect.width > 0 && selectionRect.height > 0 && (
+          <Group
+            x={imageFit.x + viewState.offsetX}
+            y={imageFit.y + viewState.offsetY}
+            scaleX={imageFit.scale * viewState.scale}
+            scaleY={imageFit.scale * viewState.scale}
+          >
+            <Rect
+              x={selectionRect.x}
+              y={selectionRect.y}
+              width={selectionRect.width}
+              height={selectionRect.height}
+              fill="rgba(59, 130, 246, 0.1)"
+              stroke="#3b82f6"
+              strokeWidth={1 / (imageFit.scale * viewState.scale)}
+              dash={[6, 3]}
             />
           </Group>
         )}

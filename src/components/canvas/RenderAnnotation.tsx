@@ -177,6 +177,15 @@ export function RenderAnnotation({
         />
       );
 
+    case "image":
+      return (
+        <ImageAnnotationRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+        />
+      );
+
     default:
       return null;
   }
@@ -229,20 +238,22 @@ function TextAnnotationRenderer({
     textarea.style.position = "absolute";
     textarea.style.top = `${stageBox.top + textPosition.y}px`;
     textarea.style.left = `${stageBox.left + textPosition.x}px`;
-    textarea.style.width = `${Math.max(textNode.width() * textNode.scaleX(), 100)}px`;
-    textarea.style.height = `${Math.max(textNode.height() * textNode.scaleY(), 30)}px`;
+    textarea.style.width = `${Math.max(textNode.width() * textNode.scaleX(), 200)}px`;
+    textarea.style.minHeight = `${Math.max(textNode.height() * textNode.scaleY(), 30)}px`;
     textarea.style.fontSize = `${annotation.fontSize}px`;
     textarea.style.fontFamily = annotation.fontFamily;
     textarea.style.color = annotation.fill;
     textarea.style.border = "2px solid #3b82f6";
     textarea.style.padding = "4px";
     textarea.style.margin = "0";
-    textarea.style.overflow = "hidden";
+    textarea.style.overflow = "auto";
     textarea.style.background = "white";
     textarea.style.outline = "none";
-    textarea.style.resize = "none";
-    textarea.style.lineHeight = "1.2";
+    textarea.style.resize = "both";
+    textarea.style.lineHeight = "1.4";
     textarea.style.zIndex = "1000";
+    textarea.style.whiteSpace = "pre-wrap";
+    textarea.style.wordWrap = "break-word";
 
     textarea.focus();
     textarea.select(); // 默认选中所有文本
@@ -254,7 +265,8 @@ function TextAnnotationRenderer({
     };
 
     textarea.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      // Ctrl+Enter 或 Cmd+Enter 提交，普通 Enter 换行
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         updateAnnotation(annotation.id, { text: textarea.value });
         removeTextarea();
@@ -262,6 +274,12 @@ function TextAnnotationRenderer({
       if (e.key === "Escape") {
         removeTextarea();
       }
+    });
+    
+    // 自动调整 textarea 高度
+    textarea.addEventListener("input", () => {
+      textarea.style.height = "auto";
+      textarea.style.height = `${textarea.scrollHeight}px`;
     });
 
     textarea.addEventListener("blur", () => {
@@ -468,7 +486,7 @@ function BlurAnnotationRenderer({
 }: BlurAnnotationRendererProps) {
   const groupRef = useRef<Konva.Group>(null);
   const [processedImage, setProcessedImage] = useState<HTMLImageElement | null>(null);
-  const { image } = useEditorStore();
+  const { image, annotations } = useEditorStore();
   const filterRadius = annotation.blurRadius || 10;
   const cornerRadius = annotation.cornerRadius || 10;
 
@@ -476,39 +494,67 @@ function BlurAnnotationRenderer({
   useEffect(() => {
     if (!image || annotation.width <= 0 || annotation.height <= 0) return;
 
-    const img = new window.Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
+    const processBlur = async () => {
       const w = Math.ceil(annotation.width);
       const h = Math.ceil(annotation.height);
-      canvas.width = w;
-      canvas.height = h;
+      
+      // 创建合成画布（原始图片大小）
+      const compositeCanvas = document.createElement("canvas");
+      compositeCanvas.width = image.width;
+      compositeCanvas.height = image.height;
+      const compositeCtx = compositeCanvas.getContext("2d");
+      if (!compositeCtx) return;
 
-      // 从原图裁剪对应区域
-      ctx.drawImage(
-        img,
+      // 1. 先绘制背景图
+      const bgImg = new window.Image();
+      bgImg.crossOrigin = "anonymous";
+      await new Promise<void>((resolve) => {
+        bgImg.onload = () => resolve();
+        bgImg.onerror = () => resolve();
+        bgImg.src = image.src;
+      });
+      compositeCtx.drawImage(bgImg, 0, 0);
+
+      // 2. 绘制所有贴图标注（按顺序，排除马赛克）
+      const imageAnnotations = annotations.filter(a => a.type === 'image');
+      for (const imgAnnotation of imageAnnotations) {
+        const img = new window.Image();
+        await new Promise<void>((resolve) => {
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+          img.src = (imgAnnotation as { src: string }).src;
+        });
+        const ia = imgAnnotation as { x: number; y: number; width: number; height: number };
+        compositeCtx.drawImage(img, ia.x, ia.y, ia.width, ia.height);
+      }
+
+      // 3. 从合成画布裁剪马赛克区域
+      const blurCanvas = document.createElement("canvas");
+      blurCanvas.width = w;
+      blurCanvas.height = h;
+      const blurCtx = blurCanvas.getContext("2d");
+      if (!blurCtx) return;
+
+      blurCtx.drawImage(
+        compositeCanvas,
         annotation.x, annotation.y, w, h,
         0, 0, w, h
       );
 
-      const imageData = ctx.getImageData(0, 0, w, h);
+      const imageData = blurCtx.getImageData(0, 0, w, h);
       
-      // 应用一次积分图优化的滤镜，性能应足够快
-      // 只有在半径非常大时才会有感知延迟
+      // 应用 Kuwahara 滤镜
       const filtered = applyKuwaharaFilter(imageData, filterRadius);
 
-      ctx.putImageData(filtered, 0, 0);
+      blurCtx.putImageData(filtered, 0, 0);
 
       const result = new window.Image();
       result.onload = () => setProcessedImage(result);
-      result.src = canvas.toDataURL();
+      result.src = blurCanvas.toDataURL();
     };
-    img.src = image.src;
-  }, [image, annotation.x, annotation.y, annotation.width, annotation.height, filterRadius]);
+
+    processBlur();
+  }, [image, annotation.x, annotation.y, annotation.width, annotation.height, filterRadius, annotations]);
 
   // 圆角裁剪路径
   const clipWithRoundedRect = (ctx: Konva.Context) => {
@@ -558,5 +604,42 @@ function BlurAnnotationRenderer({
         />
       )}
     </Group>
+  );
+}
+
+// 图片贴图渲染器
+interface ImageAnnotationRendererProps {
+  annotation: Extract<Annotation, { type: "image" }>;
+  commonProps: Record<string, unknown>;
+  nodeRef: React.RefObject<Konva.Node | null>;
+}
+
+function ImageAnnotationRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+}: ImageAnnotationRendererProps) {
+  const [image, setImage] = useState<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    const img = new window.Image();
+    img.src = annotation.src;
+    img.onload = () => {
+      setImage(img);
+    };
+  }, [annotation.src]);
+
+  return (
+    <KonvaImage
+      ref={(node) => {
+        if (nodeRef) {
+          (nodeRef as React.MutableRefObject<Konva.Node | null>).current = node;
+        }
+      }}
+      {...commonProps}
+      image={image || undefined}
+      width={annotation.width}
+      height={annotation.height}
+    />
   );
 }

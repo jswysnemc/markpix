@@ -17,6 +17,7 @@ import {
   Hash,
   Grid3X3,
   Crop,
+  ImagePlus,
   Undo2,
   Redo2,
   Trash2,
@@ -47,6 +48,7 @@ const tools: { type: ToolType; icon: React.ReactNode; label: string }[] = [
   { type: "marker", icon: <Hash size={18} />, label: "序号 (M)" },
   { type: "blur", icon: <Grid3X3 size={18} />, label: "马赛克 (U)" },
   { type: "crop", icon: <Crop size={18} />, label: "裁剪 (C)" },
+  { type: "image", icon: <ImagePlus size={18} />, label: "插入图片 (I)" },
 ];
 
 interface ToolbarProps {
@@ -55,6 +57,7 @@ interface ToolbarProps {
   onCopy: () => void;
   onOpenSettings: () => void;
   onClose: () => void;
+  onInsertImage?: () => void;
 }
 
 export function Toolbar({
@@ -63,6 +66,7 @@ export function Toolbar({
   onCopy,
   onOpenSettings,
   onClose,
+  onInsertImage,
 }: ToolbarProps) {
   const {
     currentTool,
@@ -149,7 +153,13 @@ export function Toolbar({
             <Button
               variant={currentTool === tool.type ? "default" : "ghost"}
               size="icon-sm"
-              onClick={() => setCurrentTool(tool.type)}
+              onClick={() => {
+                if (tool.type === "image" && onInsertImage) {
+                  onInsertImage();
+                } else {
+                  setCurrentTool(tool.type);
+                }
+              }}
               disabled={!image && tool.type !== "select"}
               className={cn(
                 "transition-all duration-200",

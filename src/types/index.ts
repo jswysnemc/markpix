@@ -14,7 +14,8 @@ export type ToolType =
   | "brush" // 画笔
   | "marker" // 序号标记
   | "blur" // 马赛克/模糊
-  | "crop"; // 裁剪
+  | "crop" // 裁剪
+  | "image"; // 图片贴图
 
 /**
  * 线条样式
@@ -151,6 +152,16 @@ export interface BlurAnnotation extends BaseAnnotation {
 }
 
 /**
+ * 图片贴图标注
+ */
+export interface ImageAnnotation extends BaseAnnotation {
+  type: "image";
+  width: number;
+  height: number;
+  src: string; // base64 或 URL
+}
+
+/**
  * 所有标注类型联合
  */
 export type Annotation =
@@ -161,7 +172,8 @@ export type Annotation =
   | TextAnnotation
   | BrushAnnotation
   | MarkerAnnotation
-  | BlurAnnotation;
+  | BlurAnnotation
+  | ImageAnnotation;
 
 /**
  * 工具配置

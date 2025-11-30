@@ -1,7 +1,7 @@
 [package]
 name = "markpix"
-version = "0.1.0"
-description = "A Tauri App"
+version = "0.2.0"
+description = "一个现代化的图片标注工具"
 authors = ["you"]
 edition = "2021"
 

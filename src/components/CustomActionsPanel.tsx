@@ -16,6 +16,7 @@ import {
 
 interface CustomActionsPanelProps {
   getCanvasDataUrl: () => Promise<string | null>;
+  imagePath?: string | null;
 }
 
 // 图标映射
@@ -25,7 +26,7 @@ const iconMap: Record<string, React.ReactNode> = {
   terminal: <Terminal size={16} />,
 };
 
-export function CustomActionsPanel({ getCanvasDataUrl }: CustomActionsPanelProps) {
+export function CustomActionsPanel({ getCanvasDataUrl, imagePath }: CustomActionsPanelProps) {
   const { customActions, toolbarOrientation } = useEditorStore();
   const [isExpanded, setIsExpanded] = useState(false);
   const [executingIndex, setExecutingIndex] = useState<number | null>(null);
@@ -35,21 +36,29 @@ export function CustomActionsPanel({ getCanvasDataUrl }: CustomActionsPanelProps
 
   // 执行自定义动作
   const handleExecute = async (index: number) => {
-    const dataUrl = await getCanvasDataUrl();
-    if (!dataUrl) {
-      alert("无法获取画布数据");
-      return;
-    }
-
     setExecutingIndex(index);
     setResult(null);
 
     try {
-      const output = await invoke<string>("execute_custom_action", {
-        actionIndex: index,
-        imageData: dataUrl,
-      });
-      setResult(output);
+      // 优先使用原始图片路径，否则使用画布数据
+      if (imagePath) {
+        const output = await invoke<string>("execute_custom_action", {
+          actionIndex: index,
+          imagePath: imagePath,
+        });
+        setResult(output);
+      } else {
+        const dataUrl = await getCanvasDataUrl();
+        if (!dataUrl) {
+          setResult("错误: 无法获取画布数据");
+          return;
+        }
+        const output = await invoke<string>("execute_custom_action", {
+          actionIndex: index,
+          imageData: dataUrl,
+        });
+        setResult(output);
+      }
     } catch (error) {
       setResult(`错误: ${error}`);
     } finally {
