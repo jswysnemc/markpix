@@ -8,20 +8,18 @@ interface ColorPickerProps {
   className?: string;
 }
 
-// 预设颜色
+// 预设颜色 - 更丰富的调色板
 const presetColors = [
-  "#ef4444", // 红色
-  "#f97316", // 橙色
-  "#eab308", // 黄色
-  "#22c55e", // 绿色
-  "#06b6d4", // 青色
-  "#3b82f6", // 蓝色
-  "#8b5cf6", // 紫色
-  "#ec4899", // 粉色
-  "#000000", // 黑色
-  "#ffffff", // 白色
-  "#6b7280", // 灰色
-  "transparent", // 透明
+  // 第一行：鲜艳色
+  "#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6",
+  // 第二行：深色
+  "#dc2626", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#2563eb",
+  // 第三行：浅色
+  "#fca5a5", "#fdba74", "#fde047", "#86efac", "#67e8f9", "#93c5fd",
+  // 第四行：紫粉灰
+  "#8b5cf6", "#a855f7", "#ec4899", "#f472b6", "#000000", "#ffffff",
+  // 第五行：灰色系
+  "#1f2937", "#4b5563", "#9ca3af", "#d1d5db", "#f3f4f6", "transparent",
 ];
 
 export function ColorPicker({ value, onChange, className }: ColorPickerProps) {
@@ -72,8 +70,9 @@ export function ColorPicker({ value, onChange, className }: ColorPickerProps) {
       {isOpen && (
         <div
           className={cn(
-            "absolute z-50 mt-2 p-3 rounded-lg shadow-lg",
-            "bg-popover border border-border",
+            "absolute z-50 bottom-full mb-2 p-3 rounded-lg shadow-xl",
+            "bg-white/95 dark:bg-gray-800/95 backdrop-blur-md",
+            "border border-gray-200 dark:border-gray-700",
             "animate-in fade-in-0 zoom-in-95"
           )}
         >
@@ -101,7 +100,8 @@ export function ColorPicker({ value, onChange, className }: ColorPickerProps) {
           </div>
 
           {/* 自定义颜色输入 */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pt-2 border-t border-border">
+            <label className="text-xs text-muted-foreground">自定义</label>
             <input
               type="color"
               value={customColor === "transparent" ? "#ffffff" : customColor}
@@ -109,7 +109,7 @@ export function ColorPicker({ value, onChange, className }: ColorPickerProps) {
                 setCustomColor(e.target.value);
                 onChange(e.target.value);
               }}
-              className="w-8 h-8 rounded cursor-pointer border-0"
+              className="w-8 h-8 rounded cursor-pointer border border-border"
             />
             <input
               type="text"
@@ -120,8 +120,14 @@ export function ColorPicker({ value, onChange, className }: ColorPickerProps) {
                   onChange(e.target.value);
                 }
               }}
+              onBlur={(e) => {
+                // 失焦时如果是有效颜色则应用
+                if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
+                  onChange(e.target.value);
+                }
+              }}
               className={cn(
-                "flex-1 px-2 py-1 text-xs rounded border border-input",
+                "w-20 px-2 py-1 text-xs rounded border border-input",
                 "bg-background text-foreground",
                 "focus:outline-none focus:ring-1 focus:ring-ring"
               )}

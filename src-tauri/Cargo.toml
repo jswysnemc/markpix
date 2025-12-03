@@ -1,8 +1,8 @@
 [package]
 name = "markpix"
-version = "0.2.0"
+version = "0.3.0"
 description = "一个现代化的图片标注工具"
-authors = ["you"]
+authors = ["snemc"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

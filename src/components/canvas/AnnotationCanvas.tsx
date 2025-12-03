@@ -1,6 +1,6 @@
 // 标注画布组件 - 核心 Konva 画布
 import { useRef, useEffect, useCallback, useState } from "react";
-import { Stage, Layer, Image as KonvaImage, Transformer, Group, Rect } from "react-konva";
+import { Stage, Layer, Image as KonvaImage, Transformer, Group, Rect, Circle, Line } from "react-konva";
 import Konva from "konva";
 import useImage from "use-image";
 import { useEditorStore, createAnnotation } from "@/store/editorStore";
@@ -27,9 +27,11 @@ export function AnnotationCanvas({
     currentTool,
     setCurrentTool,
     toolConfig,
+    setToolConfig,
     annotations,
     addAnnotation,
     updateAnnotation,
+    deleteAnnotation,
     selectedIds,
     setSelectedIds,
     clearSelection,
@@ -46,6 +48,7 @@ export function AnnotationCanvas({
     setIsCropping,
     cropMask,
     editingTextId,
+    setEditingTextId,
   } = useEditorStore();
 
   // 加载图片
@@ -67,6 +70,10 @@ export function AnnotationCanvas({
   
   // 用于 requestAnimationFrame 节流
   const rafRef = useRef<number | null>(null);
+  
+  // 删除按钮位置（基于选中标注的边界框）
+  const [deleteButtonPos, setDeleteButtonPos] = useState<{ x: number; y: number } | null>(null);
+  const [deleteButtonHover, setDeleteButtonHover] = useState(false);
   
   // 框选状态
   const [selectionRect, setSelectionRect] = useState<{
@@ -112,7 +119,7 @@ export function AnnotationCanvas({
     return { x: imageX, y: imageY };
   }, [getImageFit, viewState]);
 
-  // 更新 Transformer
+  // 更新 Transformer 和删除按钮位置
   useEffect(() => {
     const transformer = transformerRef.current;
     const stage = stageRef.current;
@@ -125,7 +132,35 @@ export function AnnotationCanvas({
 
     transformer.nodes(selectedNodes);
     transformer.getLayer()?.batchDraw();
-  }, [selectedIds, annotations]);
+
+    // 更新删除按钮位置（以右上角锚点为参考，偏移到右上方）
+    const updateDeleteButtonPos = () => {
+      if (selectedNodes.length > 0) {
+        // 获取 top-right 锚点的位置作为参考
+        const topRightAnchor = transformer.findOne(".top-right");
+        if (topRightAnchor) {
+          const anchorPos = topRightAnchor.absolutePosition();
+          setDeleteButtonPos({
+            x: anchorPos.x + 12,  // 向右偏移
+            y: anchorPos.y - 12,  // 向上偏移
+          });
+        }
+      } else {
+        setDeleteButtonPos(null);
+      }
+    };
+    
+    updateDeleteButtonPos();
+    
+    // 监听 Transformer 变换以实时更新按钮位置
+    transformer.on("transform", updateDeleteButtonPos);
+    transformer.on("dragmove", updateDeleteButtonPos);
+    
+    return () => {
+      transformer.off("transform", updateDeleteButtonPos);
+      transformer.off("dragmove", updateDeleteButtonPos);
+    };
+  }, [selectedIds, annotations, viewState]);
 
   // 处理鼠标按下
   const handleMouseDown = useCallback(
@@ -219,10 +254,12 @@ export function AnnotationCanvas({
         lastTextCreateTimeRef.current = now;
         
         const newAnnotation = createAnnotation(currentTool, toolConfig, pos, {
-          text: "双击编辑",
+          text: "",  // 空文本，立即进入编辑模式
         });
         addAnnotation(newAnnotation);
         setSelectedIds([newAnnotation.id]);
+        // 设置为正在编辑，触发自动进入编辑模式
+        setEditingTextId(newAnnotation.id);
         return;
       }
 
@@ -555,11 +592,103 @@ export function AnnotationCanvas({
     startPointRef.current = null;
   }, [isDrawing, drawingAnnotation, addAnnotation, setIsDrawing, isCropping, currentTool, cropArea, setIsCropping, setCropArea, selectionRect, annotations, selectedIds, setSelectedIds]);
 
-  // 处理滚轮缩放
+  // 处理滚轮：根据选中标注类型调节属性，或缩放画布
   const handleWheel = useCallback(
     (e: Konva.KonvaEventObject<WheelEvent>) => {
       e.evt.preventDefault();
+      const delta = e.evt.deltaY > 0 ? -1 : 1;
 
+      // 如果有选中的标注，根据标注类型调节对应属性
+      if (selectedIds.length > 0 && currentTool !== "pan") {
+        // 获取选中的标注
+        const selectedAnnotations = selectedIds
+          .map(id => annotations.find(a => a.id === id))
+          .filter((a): a is Annotation => a !== undefined);
+        
+        if (selectedAnnotations.length === 0) return;
+
+        // 根据第一个选中标注的类型来决定调节什么属性
+        const firstAnn = selectedAnnotations[0];
+        let adjusted = false;
+
+        switch (firstAnn.type) {
+          case "rectangle":
+          case "ellipse":
+          case "arrow":
+          case "line":
+          case "brush": {
+            // 调节线条粗细
+            const currentWidth = (firstAnn as { strokeWidth: number }).strokeWidth;
+            const newStrokeWidth = clamp(currentWidth + delta, 1, 50);
+            setToolConfig({ strokeWidth: newStrokeWidth });
+            selectedAnnotations.forEach(ann => {
+              if ("strokeWidth" in ann) {
+                updateAnnotation(ann.id, { strokeWidth: newStrokeWidth });
+              }
+            });
+            adjusted = true;
+            break;
+          }
+          case "text": {
+            // 调节字体大小
+            const currentFontSize = (firstAnn as { fontSize: number }).fontSize;
+            const newFontSize = clamp(currentFontSize + delta * 2, 8, 200);
+            setToolConfig({ fontSize: newFontSize });
+            selectedAnnotations.forEach(ann => {
+              if (ann.type === "text") {
+                updateAnnotation(ann.id, { fontSize: newFontSize });
+              }
+            });
+            adjusted = true;
+            break;
+          }
+          case "marker": {
+            // 调节序号大小
+            const currentSize = (firstAnn as { size: number }).size;
+            const newSize = clamp(currentSize + delta * 2, 16, 100);
+            setToolConfig({ markerSize: newSize });
+            selectedAnnotations.forEach(ann => {
+              if (ann.type === "marker") {
+                updateAnnotation(ann.id, { size: newSize });
+              }
+            });
+            adjusted = true;
+            break;
+          }
+          case "blur": {
+            // 调节模糊半径
+            const currentRadius = (firstAnn as { blurRadius?: number }).blurRadius || 10;
+            const newRadius = clamp(currentRadius + delta, 2, 30);
+            setToolConfig({ blurRadius: newRadius });
+            selectedAnnotations.forEach(ann => {
+              if (ann.type === "blur") {
+                updateAnnotation(ann.id, { blurRadius: newRadius });
+              }
+            });
+            adjusted = true;
+            break;
+          }
+          case "image": {
+            // 调节图片大小（等比例缩放）
+            const scaleFactor = 1 + delta * 0.05; // 每次缩放 5%
+            selectedAnnotations.forEach(ann => {
+              if (ann.type === "image") {
+                const ia = ann as { width: number; height: number };
+                updateAnnotation(ann.id, { 
+                  width: clamp(ia.width * scaleFactor, 20, 2000),
+                  height: clamp(ia.height * scaleFactor, 20, 2000)
+                });
+              }
+            });
+            adjusted = true;
+            break;
+          }
+        }
+
+        if (adjusted) return;
+      }
+
+      // 默认：缩放画布
       const stage = stageRef.current;
       if (!stage) return;
 
@@ -590,7 +719,7 @@ export function AnnotationCanvas({
         offsetY: newOffsetY,
       });
     },
-    [viewState, setViewState, getImageFit]
+    [viewState, setViewState, getImageFit, currentTool, selectedIds, toolConfig, setToolConfig, annotations, updateAnnotation]
   );
 
   // 平移状态
@@ -657,6 +786,28 @@ export function AnnotationCanvas({
           updates.radiusY =
             (annotation as { radiusY: number }).radiusY * scaleY;
           break;
+        case "arrow":
+        case "line":
+        case "brush":
+          // 线条类型：缩放 points 数组
+          const points = (annotation as { points: number[] }).points;
+          const scaledPoints = points.map((val, i) => 
+            i % 2 === 0 ? val * scaleX : val * scaleY
+          );
+          updates.points = scaledPoints;
+          // 同时更新线条粗细
+          if ((annotation as { strokeWidth?: number }).strokeWidth) {
+            updates.strokeWidth = (annotation as { strokeWidth: number }).strokeWidth * Math.max(scaleX, scaleY);
+          }
+          break;
+        case "text":
+          // 文字类型：缩放字体大小
+          updates.fontSize = (annotation as { fontSize: number }).fontSize * Math.max(scaleX, scaleY);
+          break;
+        case "marker":
+          // 序号标记：缩放尺寸
+          updates.size = (annotation as { size: number }).size * Math.max(scaleX, scaleY);
+          break;
       }
 
       updateAnnotation(id, updates as Partial<Annotation>);
@@ -682,21 +833,19 @@ export function AnnotationCanvas({
     }
   };
 
-  // 右键切换到选择工具
+  // 右键切换到选择工具（编辑文字时不切换）
   const handleContextMenu = useCallback(
     (e: Konva.KonvaEventObject<PointerEvent>) => {
       e.evt.preventDefault();
+      // 如果正在编辑文字，不切换工具
+      if (editingTextId) return;
       setCurrentTool("select");
     },
-    [setCurrentTool]
+    [setCurrentTool, editingTextId]
   );
 
   if (!image || !loadedImage) {
-    return (
-      <div className="flex items-center justify-center w-full h-full text-muted-foreground">
-        请打开或粘贴图片
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -730,6 +879,7 @@ export function AnnotationCanvas({
 
         {/* 标注层 - 使用 Group 来应用变换 */}
         <Group
+          name="annotations-group"
           x={imageFit.x + viewState.offsetX}
           y={imageFit.y + viewState.offsetY}
           scaleX={imageFit.scale * viewState.scale}
@@ -768,6 +918,7 @@ export function AnnotationCanvas({
             y={imageFit.y + viewState.offsetY}
             scaleX={imageFit.scale * viewState.scale}
             scaleY={imageFit.scale * viewState.scale}
+            listening={false}
           >
             {/* 裁剪区域外的遮罩 */}
             <Rect
@@ -818,6 +969,7 @@ export function AnnotationCanvas({
             y={imageFit.y + viewState.offsetY}
             scaleX={imageFit.scale * viewState.scale}
             scaleY={imageFit.scale * viewState.scale}
+            listening={false}
           >
             {/* 裁剪蒙版外的遮罩 - 半透明黑色 */}
             <Rect
@@ -904,6 +1056,55 @@ export function AnnotationCanvas({
             "bottom-center",
           ]}
         />
+
+        {/* 删除按钮 - 选中标注时显示在右上角 */}
+        {deleteButtonPos && selectedIds.length > 0 && (
+          <Group
+            x={deleteButtonPos.x}
+            y={deleteButtonPos.y}
+            onClick={() => {
+              selectedIds.forEach(id => deleteAnnotation(id));
+              clearSelection();
+            }}
+            onTap={() => {
+              selectedIds.forEach(id => deleteAnnotation(id));
+              clearSelection();
+            }}
+            onMouseEnter={(e) => {
+              setDeleteButtonHover(true);
+              const container = e.target.getStage()?.container();
+              if (container) container.style.cursor = "pointer";
+            }}
+            onMouseLeave={(e) => {
+              setDeleteButtonHover(false);
+              const container = e.target.getStage()?.container();
+              if (container) container.style.cursor = "default";
+            }}
+          >
+            {/* 背景圆 - 使用 Transformer 相同的蓝色，hover 时变深 */}
+            <Circle
+              radius={10}
+              fill={deleteButtonHover ? "#2563eb" : "#3b82f6"}
+              stroke="#fff"
+              strokeWidth={1}
+              scaleX={deleteButtonHover ? 1.1 : 1}
+              scaleY={deleteButtonHover ? 1.1 : 1}
+            />
+            {/* X 图标 */}
+            <Line
+              points={[-3, -3, 3, 3]}
+              stroke="#fff"
+              strokeWidth={2}
+              lineCap="round"
+            />
+            <Line
+              points={[3, -3, -3, 3]}
+              stroke="#fff"
+              strokeWidth={2}
+              lineCap="round"
+            />
+          </Group>
+        )}
       </Layer>
     </Stage>
   );

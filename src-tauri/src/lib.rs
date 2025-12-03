@@ -267,22 +267,40 @@ fn get_config_path() -> String {
     AppConfig::config_path().to_string_lossy().to_string()
 }
 
+/// 直接从 base64 数据复制图片到剪贴板（更快，无需临时文件）
+#[tauri::command]
+fn copy_image_data_to_clipboard(data: String) -> Result<(), String> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    
+    // 解码 base64 数据
+    let image_data = STANDARD.decode(&data)
+        .map_err(|e| format!("解码图片数据失败: {}", e))?;
+    
+    copy_raw_image_to_clipboard(&image_data)
+}
+
 /// 复制图片到剪贴板（Wayland 使用 wl-copy）
 #[tauri::command]
 fn copy_image_to_clipboard(path: String) -> Result<(), String> {
+    let image_data = std::fs::read(&path)
+        .map_err(|e| format!("读取图片文件失败: {}", e))?;
+    copy_raw_image_to_clipboard(&image_data)
+}
+
+/// 内部函数：将原始图片数据复制到剪贴板
+fn copy_raw_image_to_clipboard(image_data: &[u8]) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
+        use std::io::Write;
+        
         // 优先尝试 wl-copy (Wayland)
         let wl_result = Command::new("wl-copy")
             .args(["--type", "image/png"])
             .stdin(std::process::Stdio::piped())
             .spawn()
             .and_then(|mut child| {
-                use std::io::Write;
-                let image_data = std::fs::read(&path)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 if let Some(stdin) = child.stdin.as_mut() {
-                    stdin.write_all(&image_data)?;
+                    stdin.write_all(image_data)?;
                 }
                 child.wait()
             });
@@ -291,27 +309,49 @@ fn copy_image_to_clipboard(path: String) -> Result<(), String> {
             return Ok(());
         }
         
-        // 回退到 xclip (X11)
-        let output = Command::new("xclip")
-            .args(["-selection", "clipboard", "-t", "image/png", "-i", &path])
-            .output()
+        // 回退到 xclip (X11) - 需要通过 stdin 传递数据
+        let mut child = Command::new("xclip")
+            .args(["-selection", "clipboard", "-t", "image/png"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| format!("执行剪贴板命令失败: {}。请确保已安装 wl-copy (wl-clipboard) 或 xclip", e))?;
         
-        if !output.status.success() {
-            return Err(format!("剪贴板命令执行失败: {}", String::from_utf8_lossy(&output.stderr)));
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin.write_all(image_data)
+                .map_err(|e| format!("写入剪贴板数据失败: {}", e))?;
+        }
+        
+        let status = child.wait()
+            .map_err(|e| format!("等待剪贴板命令完成失败: {}", e))?;
+        
+        if !status.success() {
+            return Err("剪贴板命令执行失败".to_string());
         }
     }
     #[cfg(target_os = "macos")]
     {
-        Command::new("osascript")
-            .args(["-e", &format!("set the clipboard to (read (POSIX file \"{}\") as TIFF picture)", path)])
-            .output()
+        use std::io::Write;
+        // macOS: 使用 pbcopy 通过 stdin
+        let mut child = Command::new("osascript")
+            .args(["-e", "set the clipboard to (read (POSIX file \"/dev/stdin\") as TIFF picture)"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| format!("复制到剪贴板失败: {}", e))?;
+        
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin.write_all(image_data).ok();
+        }
+        child.wait().ok();
     }
     #[cfg(target_os = "windows")]
     {
+        // Windows: 需要保存到临时文件
+        use std::io::Write;
+        let temp_path = std::env::temp_dir().join("markpix_clipboard.png");
+        std::fs::write(&temp_path, image_data)
+            .map_err(|e| format!("保存临时文件失败: {}", e))?;
         Command::new("powershell")
-            .args(["-Command", &format!("Set-Clipboard -Path '{}'", path)])
+            .args(["-Command", &format!("Set-Clipboard -Path '{}'", temp_path.display())])
             .output()
             .map_err(|e| format!("复制到剪贴板失败: {}", e))?;
     }
@@ -405,6 +445,7 @@ pub fn run_with_args(
             reload_config,
             get_config_path,
             copy_image_to_clipboard,
+            copy_image_data_to_clipboard,
             open_directory,
             exit_app,
             save_config,

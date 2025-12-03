@@ -15,17 +15,20 @@ import Konva from "konva";
 // 工具栏高度和边距常量
 const TOOLBAR_HEIGHT = 48;
 const TOOLBAR_MARGIN = 16;
-const MIN_WINDOW_WIDTH = 900;
-const MIN_WINDOW_HEIGHT = 600;
+const MIN_WINDOW_WIDTH = 1050;
+const MIN_WINDOW_HEIGHT = 500;
 const MAX_WINDOW_WIDTH = 1920;
 const MAX_WINDOW_HEIGHT = 1080;
 
 export function Editor() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const mousePositionRef = useRef<{ x: number; y: number } | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [showSettings, setShowSettings] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showOpenConfirm, setShowOpenConfirm] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [cliOutputPattern, setCliOutputPattern] = useState<string | null>(null);
 
   const {
     image,
@@ -44,6 +47,7 @@ export function Editor() {
     pushHistory,
     annotations,
     outputPattern,
+    viewState,
   } = useEditorStore();
 
   // 监听容器大小变化
@@ -63,8 +67,63 @@ export function Editor() {
     const resizeObserver = new ResizeObserver(updateSize);
     resizeObserver.observe(container);
 
-    return () => resizeObserver.disconnect();
+    // 跟踪鼠标位置
+    const handleMouseMove = (e: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      mousePositionRef.current = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      };
+    };
+    container.addEventListener("mousemove", handleMouseMove);
+
+    return () => {
+      resizeObserver.disconnect();
+      container.removeEventListener("mousemove", handleMouseMove);
+    };
   }, []);
+
+  // 计算图片贴图位置：鼠标位置转换为图片坐标，如果不在范围内则居中
+  const getImageInsertPosition = useCallback((imgWidth: number, imgHeight: number) => {
+    if (!image || !mousePositionRef.current) {
+      // 没有背景图或鼠标位置，放中心
+      return { x: 50, y: 50 };
+    }
+
+    // 计算图片适应参数
+    const containerW = containerSize.width;
+    const containerH = containerSize.height;
+    const scaleX = containerW / image.width;
+    const scaleY = containerH / image.height;
+    const fitScale = Math.min(scaleX, scaleY, 1);
+    const fitX = (containerW - image.width * fitScale) / 2;
+    const fitY = (containerH - image.height * fitScale) / 2;
+
+    // 当前总缩放
+    const totalScale = fitScale * viewState.scale;
+
+    // 鼠标位置转换为图片坐标
+    const mouseX = mousePositionRef.current.x;
+    const mouseY = mousePositionRef.current.y;
+    
+    const imageX = (mouseX - fitX - viewState.offsetX) / totalScale;
+    const imageY = (mouseY - fitY - viewState.offsetY) / totalScale;
+
+    // 检查是否在图片范围内
+    if (imageX >= 0 && imageX <= image.width && imageY >= 0 && imageY <= image.height) {
+      // 在范围内，返回鼠标位置（减去贴图尺寸的一半使其居中于鼠标）
+      return {
+        x: Math.max(0, imageX - imgWidth / 2),
+        y: Math.max(0, imageY - imgHeight / 2),
+      };
+    } else {
+      // 不在范围内，放图片中心
+      return {
+        x: Math.max(0, (image.width - imgWidth) / 2),
+        y: Math.max(0, (image.height - imgHeight) / 2),
+      };
+    }
+  }, [image, containerSize, viewState]);
 
   // 初始化：加载 CLI 传入的图片和自定义动作
   useEffect(() => {
@@ -82,6 +141,12 @@ export function Editor() {
         // 加载自定义动作
         const actions = await invoke<CustomAction[]>("get_custom_actions");
         setCustomActions(actions);
+
+        // 获取 CLI 指定的输出模式（优先于配置）
+        const cliPattern = await invoke<string | null>("get_cli_output_pattern");
+        if (cliPattern) {
+          setCliOutputPattern(cliPattern);
+        }
       } catch (error) {
         console.error("初始化失败:", error);
       }
@@ -229,25 +294,19 @@ export function Editor() {
         offscreenLayer.add(konvaImg);
 
         // 复制所有标注到离屏 Layer（原始坐标，应用裁剪偏移）
-        const layer = stage.findOne("Layer") as Konva.Layer;
-        if (layer) {
-          const annotationGroup = layer.children?.find(
-            (child) => child instanceof Konva.Group && child.children && child.children.length > 0
-          ) as Konva.Group | undefined;
-          
-          if (annotationGroup) {
-            annotationGroup.children?.forEach((child) => {
-              if (child.name() !== "background-image") {
-                const clone = child.clone();
-                // 重置缩放，应用裁剪偏移
-                clone.scaleX(1);
-                clone.scaleY(1);
-                clone.x(clone.x() - exportX);
-                clone.y(clone.y() - exportY);
-                offscreenLayer.add(clone);
-              }
-            });
-          }
+        const annotationGroup = stage.findOne(".annotations-group") as Konva.Group;
+        if (annotationGroup) {
+          annotationGroup.children?.forEach((child) => {
+            if (child.name() !== "background-image") {
+              const clone = child.clone();
+              // 重置缩放，应用裁剪偏移
+              clone.scaleX(1);
+              clone.scaleY(1);
+              clone.x(clone.x() - exportX);
+              clone.y(clone.y() - exportY);
+              offscreenLayer.add(clone);
+            }
+          });
         }
 
         offscreenLayer.draw();
@@ -275,7 +334,7 @@ export function Editor() {
     try {
       const dataUrl = await getCanvasDataUrl();
       if (!dataUrl) {
-        alert("无法获取画布数据");
+        showToast("无法获取画布数据", "error");
         return;
       }
 
@@ -285,7 +344,8 @@ export function Editor() {
       const pad = (n: number) => n.toString().padStart(2, "0");
       const timestamp = `${now.getFullYear()}_${pad(now.getMonth() + 1)}_${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
 
-      let defaultName = outputPattern || "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png";
+      // CLI 参数优先于配置
+      let defaultName = cliOutputPattern || outputPattern || "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png";
       defaultName = defaultName
         .replace(/{input_file_base}/g, baseName)
         .replace(/{input_file}/g, image.path || image.name || "")
@@ -301,11 +361,11 @@ export function Editor() {
 
       if (filePath) {
         await invoke("save_image_file", { path: filePath, data: dataUrl });
-        alert("保存成功！");
+        showToast("保存成功");
       }
     } catch (error) {
       console.error("保存失败:", error);
-      alert(`保存失败: ${error}`);
+      showToast(`保存失败: ${error}`, "error");
     }
   };
 
@@ -340,13 +400,16 @@ export function Editor() {
         img.src = imageData;
         await new Promise((resolve) => { img.onload = resolve; });
         
+        // 计算插入位置
+        const pos = getImageInsertPosition(img.width, img.height);
+        
         // 添加为贴图标注
         const { addAnnotation, pushHistory } = useEditorStore.getState();
         const imageAnnotation = {
           id: `image-${Date.now()}`,
           type: "image" as const,
-          x: 50,
-          y: 50,
+          x: pos.x,
+          y: pos.y,
           width: img.width,
           height: img.height,
           src: imageData,
@@ -359,33 +422,30 @@ export function Editor() {
     }
   };
 
-  // 复制到剪贴板 - 通过临时文件方式
+  // 显示无侵入式提示
+  const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 2000);
+  }, []);
+
+  // 复制到剪贴板 - 直接从内存复制，无需临时文件
   const handleCopy = async () => {
     if (!image) return;
 
     try {
       const dataUrl = await getCanvasDataUrl();
       if (!dataUrl) {
-        alert("无法获取画布数据");
+        showToast("无法获取画布数据", "error");
         return;
       }
 
-      // 提取 base64 数据
+      // 提取 base64 数据并直接复制
       const base64Data = dataUrl.split(",")[1];
-      
-      // 保存到临时文件并复制
-      const tempPath = `/tmp/markpix-clipboard-${Date.now()}.png`;
-      await invoke("save_image_file", {
-        path: tempPath,
-        data: base64Data,
-      });
-
-      // 使用 Rust 后端复制图片文件到剪贴板
-      await invoke("copy_image_to_clipboard", { path: tempPath });
-      alert("已复制到剪贴板！");
+      await invoke("copy_image_data_to_clipboard", { data: base64Data });
+      showToast("已复制到剪贴板");
     } catch (error) {
       console.error("复制失败:", error);
-      alert(`复制失败: ${error}`);
+      showToast(`复制失败: ${error}`, "error");
     }
   };
 
@@ -460,12 +520,15 @@ export function Editor() {
 
           // 如果已有背景图，则作为贴图添加
           if (image) {
+            // 计算插入位置
+            const pos = getImageInsertPosition(size.width, size.height);
+            
             const { addAnnotation, pushHistory } = useEditorStore.getState();
             const imageAnnotation = {
               id: `image-${Date.now()}`,
               type: "image" as const,
-              x: 50,
-              y: 50,
+              x: pos.x,
+              y: pos.y,
               width: size.width,
               height: size.height,
               src: dataUrl,
@@ -495,21 +558,27 @@ export function Editor() {
   // 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+V 粘贴
-      if (e.ctrlKey && e.key === "v") {
+      // 检查是否在输入框中（textarea, input 等）
+      const target = e.target as HTMLElement;
+      const isInInput = target.tagName === "INPUT" || 
+                        target.tagName === "TEXTAREA" || 
+                        target.isContentEditable;
+
+      // Ctrl+V 粘贴（在输入框外才触发自定义粘贴）
+      if (e.ctrlKey && e.key === "v" && !isInInput) {
         handlePaste();
         return;
       }
 
-      // Ctrl+Z 撤销
-      if (e.ctrlKey && e.key === "z") {
+      // Ctrl+Z 撤销（在输入框外）
+      if (e.ctrlKey && e.key === "z" && !isInInput) {
         e.preventDefault();
         undo();
         return;
       }
 
-      // Ctrl+Y 重做
-      if (e.ctrlKey && e.key === "y") {
+      // Ctrl+Y 重做（在输入框外）
+      if (e.ctrlKey && e.key === "y" && !isInInput) {
         e.preventDefault();
         redo();
         return;
@@ -522,21 +591,29 @@ export function Editor() {
         return;
       }
 
-      // Ctrl+C 复制
-      if (e.ctrlKey && e.key === "c" && image) {
+      // Ctrl+Shift+C 或 F12 打开开发者工具（开发模式下）
+      if ((e.ctrlKey && e.shiftKey && e.key === "C") || e.key === "F12") {
+        // 不阻止默认行为，允许浏览器/Tauri 处理开发者工具
+        return;
+      }
+
+      // Ctrl+C 复制（在输入框外）
+      if (e.ctrlKey && e.key === "c" && image && !isInInput) {
         e.preventDefault();
         handleCopy();
         return;
       }
 
-      // Delete 或 Backspace 删除选中
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0) {
+      // Delete 或 Backspace 删除选中（在输入框外）
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0 && !isInInput) {
         e.preventDefault();
         selectedIds.forEach((id) => deleteAnnotation(id));
         return;
       }
 
-      // 工具快捷键
+      // 工具快捷键（在输入框外才生效）
+      if (isInInput) return;
+      
       const toolKeys: Record<string, typeof currentTool> = {
         v: "select",
         h: "pan",
@@ -606,11 +683,53 @@ export function Editor() {
         {/* 欢迎提示 */}
         {!image && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center text-muted-foreground">
-              <p className="text-lg mb-2">欢迎使用 MarkPix</p>
-              <p className="text-sm">
-                点击工具栏的 📂 打开图片，或按 Ctrl+V 粘贴剪贴板图片
+            <div className="text-center text-muted-foreground max-w-lg">
+              <p className="text-xl font-medium mb-4">欢迎使用 MarkPix</p>
+              <p className="text-sm mb-6">
+                点击工具栏的 📂 打开图片，或按 <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Ctrl+V</kbd> 粘贴剪贴板图片
               </p>
+              
+              <div className="grid grid-cols-2 gap-6 text-left text-xs">
+                {/* 快捷键 */}
+                <div>
+                  <p className="font-medium text-sm mb-2 text-foreground">⌨️ 快捷键</p>
+                  <div className="space-y-1">
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">V</kbd> 选择工具</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">H</kbd> 平移画布</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">R</kbd> 矩形</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">E</kbd> 椭圆</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">A</kbd> 箭头</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">L</kbd> 直线</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">T</kbd> 文字</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">B</kbd> 画笔</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">M</kbd> 序号标记</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">U</kbd> 马赛克</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">C</kbd> 裁剪</p>
+                  </div>
+                </div>
+
+                {/* 鼠标操作 */}
+                <div>
+                  <p className="font-medium text-sm mb-2 text-foreground">🖱️ 鼠标操作</p>
+                  <div className="space-y-1">
+                    <p><span className="font-medium">左键</span> 绘制/选择标注</p>
+                    <p><span className="font-medium">左键拖动</span> 移动标注/画布</p>
+                    <p><span className="font-medium">右键</span> 取消绘制</p>
+                    <p><span className="font-medium">中键拖动</span> 平移画布</p>
+                    <p><span className="font-medium">滚轮</span> 缩放画布</p>
+                    <p><span className="font-medium">选中+滚轮</span> 调节属性</p>
+                  </div>
+                  
+                  <p className="font-medium text-sm mt-4 mb-2 text-foreground">⚡ 常用操作</p>
+                  <div className="space-y-1">
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Z</kbd> 撤销</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Y</kbd> 重做</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+S</kbd> 保存</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+C</kbd> 复制</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Del</kbd> 删除选中</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -715,6 +834,19 @@ export function Editor() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast 提示 */}
+      {toast && (
+        <div
+          className={`fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300 ${
+            toast.type === "success"
+              ? "bg-green-500 text-white"
+              : "bg-red-500 text-white"
+          }`}
+        >
+          {toast.message}
         </div>
       )}
     </div>
