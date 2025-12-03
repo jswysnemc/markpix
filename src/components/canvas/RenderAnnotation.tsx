@@ -211,10 +211,11 @@ function TextAnnotationRenderer({
   onEndEdit,
 }: TextAnnotationRendererProps) {
   const textRef = useRef<Konva.Text>(null);
-  const { updateAnnotation } = useEditorStore();
+  const { updateAnnotation, deleteAnnotation, currentTool, editingTextId } = useEditorStore();
+  const hasAutoEditedRef = useRef(false);
 
-  // 双击编辑
-  const handleDblClick = () => {
+  // 进入编辑模式
+  const enterEditMode = () => {
     onStartEdit();
 
     const textNode = textRef.current;
@@ -234,7 +235,9 @@ function TextAnnotationRenderer({
     const textarea = document.createElement("textarea");
     document.body.appendChild(textarea);
 
-    textarea.value = annotation.text;
+    // 如果是默认占位文字或空文本，清空便于用户输入
+    const isPlaceholder = annotation.text === "双击编辑" || annotation.text === "点击编辑" || annotation.text === "";
+    textarea.value = isPlaceholder ? "" : annotation.text;
     textarea.style.position = "absolute";
     textarea.style.top = `${stageBox.top + textPosition.y}px`;
     textarea.style.left = `${stageBox.left + textPosition.x}px`;
@@ -256,22 +259,41 @@ function TextAnnotationRenderer({
     textarea.style.wordWrap = "break-word";
 
     textarea.focus();
-    textarea.select(); // 默认选中所有文本
+    if (!isPlaceholder) {
+      textarea.select(); // 非占位文字时选中所有文本
+    }
 
+    let isRemoved = false;
     const removeTextarea = () => {
+      if (isRemoved) return;
+      isRemoved = true;
       textarea.remove();
       textNode.show();
       onEndEdit();
+    };
+
+    const saveAndRemove = () => {
+      const newText = textarea.value.trim();
+      if (newText === "") {
+        // 空文本则删除标注
+        deleteAnnotation(annotation.id);
+      } else {
+        updateAnnotation(annotation.id, { text: textarea.value });
+      }
+      removeTextarea();
     };
 
     textarea.addEventListener("keydown", (e) => {
       // Ctrl+Enter 或 Cmd+Enter 提交，普通 Enter 换行
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        updateAnnotation(annotation.id, { text: textarea.value });
-        removeTextarea();
+        saveAndRemove();
       }
       if (e.key === "Escape") {
+        // 取消编辑，恢复原文本（如果原文本是占位符且未输入内容，则删除）
+        if (isPlaceholder && textarea.value.trim() === "") {
+          deleteAnnotation(annotation.id);
+        }
         removeTextarea();
       }
     });
@@ -282,11 +304,135 @@ function TextAnnotationRenderer({
       textarea.style.height = `${textarea.scrollHeight}px`;
     });
 
-    textarea.addEventListener("blur", () => {
-      updateAnnotation(annotation.id, { text: textarea.value });
-      removeTextarea();
+    textarea.addEventListener("blur", (e) => {
+      // 如果是点击了自定义右键菜单，不要触发保存
+      const relatedTarget = e.relatedTarget as HTMLElement;
+      if (relatedTarget?.closest('.text-context-menu')) {
+        return;
+      }
+      saveAndRemove();
+    });
+
+    // 滚轮调节字号
+    let currentFontSize = annotation.fontSize;
+    textarea.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -2 : 2;
+      currentFontSize = Math.max(8, Math.min(200, currentFontSize + delta));
+      textarea.style.fontSize = `${currentFontSize}px`;
+      updateAnnotation(annotation.id, { fontSize: currentFontSize });
+    }, { passive: false });
+
+    // 自定义右键菜单（只显示复制、剪切、粘贴）
+    textarea.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      
+      // 移除已有的菜单
+      document.querySelectorAll('.text-context-menu').forEach(el => el.remove());
+      
+      // 创建自定义菜单
+      const menu = document.createElement("div");
+      menu.className = "text-context-menu";
+      menu.style.cssText = `
+        position: fixed;
+        left: ${e.clientX}px;
+        top: ${e.clientY}px;
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        padding: 4px 0;
+        z-index: 10000;
+        min-width: 100px;
+      `;
+      
+      const createMenuItem = (label: string, action: () => void) => {
+        const item = document.createElement("div");
+        item.textContent = label;
+        item.style.cssText = `
+          padding: 6px 12px;
+          cursor: pointer;
+          font-size: 13px;
+          color: #374151;
+        `;
+        item.addEventListener("mouseenter", () => {
+          item.style.background = "#f3f4f6";
+        });
+        item.addEventListener("mouseleave", () => {
+          item.style.background = "transparent";
+        });
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          action();
+          menu.remove();
+          textarea.focus();
+        });
+        return item;
+      };
+      
+      menu.appendChild(createMenuItem("剪切", () => {
+        document.execCommand("cut");
+      }));
+      menu.appendChild(createMenuItem("复制", () => {
+        document.execCommand("copy");
+      }));
+      menu.appendChild(createMenuItem("粘贴", async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          textarea.value = textarea.value.substring(0, start) + text + textarea.value.substring(end);
+          textarea.selectionStart = textarea.selectionEnd = start + text.length;
+        } catch {
+          document.execCommand("paste");
+        }
+      }));
+      
+      document.body.appendChild(menu);
+      
+      // 点击其他地方关闭菜单
+      const closeMenu = (e: MouseEvent) => {
+        if (!menu.contains(e.target as Node)) {
+          menu.remove();
+          document.removeEventListener("mousedown", closeMenu);
+        }
+      };
+      setTimeout(() => {
+        document.addEventListener("mousedown", closeMenu);
+      }, 0);
     });
   };
+
+  // 单击处理：文字工具下单击进入编辑，选择工具下选中标注
+  const handleClick = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+    if (currentTool === "text") {
+      enterEditMode();
+    } else if (currentTool === "select") {
+      // 选择工具下，调用原始的 onClick 来选中标注
+      const originalOnClick = commonProps.onClick as ((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void) | undefined;
+      if (originalOnClick) {
+        originalOnClick(e);
+      }
+    }
+  };
+
+  const handleDblClick = () => {
+    // 非文字工具下双击进入编辑
+    if (currentTool !== "text") {
+      enterEditMode();
+    }
+  };
+
+  // 自动进入编辑模式（新创建的文字）
+  useEffect(() => {
+    if (editingTextId === annotation.id && !hasAutoEditedRef.current) {
+      hasAutoEditedRef.current = true;
+      // 延迟一帧等待渲染完成
+      requestAnimationFrame(() => {
+        enterEditMode();
+      });
+    }
+  }, [editingTextId, annotation.id]);
 
   // 补偿后的字体大小
   const compensatedFontSize = annotation.fontSize / scale;
@@ -305,6 +451,8 @@ function TextAnnotationRenderer({
       fontFamily={annotation.fontFamily}
       fill={annotation.fill}
       padding={(annotation.padding || 4) / scale}
+      onClick={handleClick}
+      onTap={handleClick}
       onDblClick={handleDblClick}
       onDblTap={handleDblClick}
     />

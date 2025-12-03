@@ -82,7 +82,7 @@ export function CustomActionsPanel({ getCanvasDataUrl, imagePath }: CustomAction
         variant="outline"
         size="icon-sm"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="mb-2"
+        className="mb-2 bg-white/90 dark:bg-gray-900/95 backdrop-blur-md shadow-md"
       >
         {isExpanded ? (
           isHorizontal ? <ChevronRight size={16} /> : <ChevronLeft size={16} />

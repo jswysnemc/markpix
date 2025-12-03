@@ -134,12 +134,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   image: null,
   setImage: (image) => {
     set({ image, annotations: [], selectedIds: [], history: [], historyIndex: -1 });
-    if (image) {
-      // 根据图片比例设置工具栏方向
-      const orientation: ToolbarOrientation =
-        image.width > image.height ? "horizontal" : "vertical";
-      set({ toolbarOrientation: orientation });
-    }
+    // 工具栏始终保持横向排列
   },
 
   // 当前工具

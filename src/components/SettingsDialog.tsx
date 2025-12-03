@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { X, Sun, Moon, Monitor, FolderOpen, Github, Plus, Trash2, Edit2, Check } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { getVersion } from "@tauri-apps/api/app";
 import type { CustomAction } from "@/types";
 
 interface SettingsDialogProps {
@@ -19,12 +20,14 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<CustomAction>({ name: "", command: "", icon: "" });
   const [isAdding, setIsAdding] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>("0.0.0");
 
   // 获取配置文件路径并加载配置
   useEffect(() => {
     if (open) {
       invoke<string>("get_config_path").then(setConfigPath);
       loadConfig();
+      getVersion().then(setAppVersion);
     }
   }, [open, loadConfig]);
 
@@ -291,7 +294,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           {/* 关于 */}
           <div className="pt-4 border-t border-border">
             <p className="text-xs text-muted-foreground text-center mb-3">
-              MarkPix v0.1.0
+              MarkPix v{appVersion}
               <br />
               一个现代化的图片标注工具
             </p>
