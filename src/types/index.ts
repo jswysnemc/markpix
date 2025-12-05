@@ -28,6 +28,21 @@ export type LineStyle = "solid" | "dashed";
 export type MarkerStyle = "filled" | "outlined";
 
 /**
+ * 箭头样式
+ */
+export type ArrowStyle = "normal" | "filled";
+
+/**
+ * 文字样式
+ */
+export type TextStyle = "normal" | "bubble";
+
+/**
+ * 气泡尾巴位置
+ */
+export type BubbleTailPosition = "left" | "right";
+
+/**
  * 序号标记类型
  */
 export type MarkerType = "number" | "letter";
@@ -83,6 +98,7 @@ export interface ArrowAnnotation extends BaseAnnotation {
   stroke: string;
   strokeWidth: number;
   lineStyle: LineStyle;
+  arrowStyle: ArrowStyle;
   pointerLength?: number;
   pointerWidth?: number;
 }
@@ -107,6 +123,10 @@ export interface TextAnnotation extends BaseAnnotation {
   fontSize: number;
   fontFamily: string;
   fill: string;
+  textStyle: TextStyle;
+  bubbleStroke?: string; // 气泡边框色（默认同文字色）
+  bubbleFill?: string; // 气泡背景色（默认透明）
+  bubbleTailPosition?: BubbleTailPosition; // 气泡尾巴位置
   backgroundColor?: string;
   padding?: number;
   width?: number;
@@ -190,6 +210,10 @@ export interface ToolConfig {
   fontSize: number;
   fontFamily: string;
   textBackgroundColor: string;
+  textStyle: TextStyle;
+  bubbleStroke: string;
+  bubbleFill: string;
+  bubbleTailPosition: BubbleTailPosition;
 
   // 画笔
   brushSize: number;
@@ -205,6 +229,9 @@ export interface ToolConfig {
   
   // 矩形圆角
   cornerRadius: number;
+
+  // 箭头
+  arrowStyle: ArrowStyle;
 }
 
 /**

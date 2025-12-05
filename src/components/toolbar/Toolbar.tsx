@@ -1,10 +1,10 @@
-// 智能工具栏组件 - 根据图片比例自动调整布局
+// 顶部工具栏组件 - 伪装为窗口标题栏
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/store/editorStore";
 import { Button } from "@/components/ui/Button";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ToolConfigPanel } from "./ToolConfigPanel";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { SelectedAnnotationConfig } from "./SelectedAnnotationConfig";
 import {
   MousePointer2,
   Hand,
@@ -29,9 +29,7 @@ import {
   RotateCcw,
   ZoomIn,
   ZoomOut,
-  Minimize2,
-  Maximize2,
-  XCircle,
+  Terminal,
 } from "lucide-react";
 import type { ToolType } from "@/types";
 
@@ -58,6 +56,7 @@ interface ToolbarProps {
   onOpenSettings: () => void;
   onClose: () => void;
   onInsertImage?: () => void;
+  onOpenCustomActions?: () => void;
 }
 
 export function Toolbar({
@@ -67,11 +66,11 @@ export function Toolbar({
   onOpenSettings,
   onClose,
   onInsertImage,
+  onOpenCustomActions,
 }: ToolbarProps) {
   const {
     currentTool,
     setCurrentTool,
-    toolbarOrientation,
     canUndo,
     canRedo,
     undo,
@@ -84,9 +83,8 @@ export function Toolbar({
     selectedIds,
     deleteAnnotation,
     clearSelection,
+    customActions,
   } = useEditorStore();
-
-  const isHorizontal = toolbarOrientation === "horizontal";
 
   // 缩放控制
   const handleZoomIn = () => {
@@ -99,57 +97,31 @@ export function Toolbar({
 
   return (
     <div
-      className={cn(
-        "absolute z-10 flex gap-1 p-2 rounded-xl",
-        "bg-white/90 dark:bg-gray-900/95 backdrop-blur-md",
-        "border border-gray-200 dark:border-gray-700",
-        "shadow-[0_4px_20px_rgba(0,0,0,0.15)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.4)]",
-        isHorizontal
-          ? "bottom-4 left-1/2 -translate-x-1/2 flex-row items-center"
-          : "right-4 top-1/2 -translate-y-1/2 flex-col items-center"
-      )}
+      className="absolute top-0 left-0 right-0 z-20 h-10 flex items-center bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"
     >
       {/* 文件操作 */}
-      <div
-        className={cn(
-          "flex gap-1",
-          isHorizontal ? "flex-row" : "flex-col",
-          "pb-1 border-b border-border",
-          !isHorizontal && "pb-0 pr-1 border-b-0 border-r"
-        )}
-      >
-        <Tooltip content="打开文件" side={isHorizontal ? "top" : "left"}>
+      <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700">
+        <Tooltip content="打开文件" side="bottom" className="left-0 translate-x-0">
           <Button variant="ghost" size="icon-sm" onClick={onOpenFile}>
-            <FolderOpen size={18} />
+            <FolderOpen size={16} />
           </Button>
         </Tooltip>
-        <Tooltip content="保存" side={isHorizontal ? "top" : "left"}>
+        <Tooltip content="保存" side="bottom">
           <Button variant="ghost" size="icon-sm" onClick={onSave} disabled={!image}>
-            <Download size={18} />
+            <Download size={16} />
           </Button>
         </Tooltip>
-        <Tooltip content="复制到剪贴板" side={isHorizontal ? "top" : "left"}>
+        <Tooltip content="复制到剪贴板" side="bottom">
           <Button variant="ghost" size="icon-sm" onClick={onCopy} disabled={!image}>
-            <Copy size={18} />
+            <Copy size={16} />
           </Button>
         </Tooltip>
       </div>
 
       {/* 绘图工具 */}
-      <div
-        className={cn(
-          "flex gap-1",
-          isHorizontal ? "flex-row" : "flex-col",
-          "py-1 border-b border-border",
-          !isHorizontal && "py-0 px-1 border-b-0 border-r"
-        )}
-      >
+      <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700">
         {tools.map((tool) => (
-          <Tooltip
-            key={tool.type}
-            content={tool.label}
-            side={isHorizontal ? "top" : "left"}
-          >
+          <Tooltip key={tool.type} content={tool.label} side="bottom">
             <Button
               variant={currentTool === tool.type ? "default" : "ghost"}
               size="icon-sm"
@@ -162,8 +134,8 @@ export function Toolbar({
               }}
               disabled={!image && tool.type !== "select"}
               className={cn(
-                "transition-all duration-200",
-                currentTool === tool.type && "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 shadow-md scale-105 ring-2 ring-blue-200 dark:ring-blue-900"
+                "transition-all duration-150",
+                currentTool === tool.type && "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
               )}
             >
               {tool.icon}
@@ -173,35 +145,18 @@ export function Toolbar({
       </div>
 
       {/* 编辑操作 */}
-      <div
-        className={cn(
-          "flex gap-1",
-          isHorizontal ? "flex-row" : "flex-col",
-          "py-1 border-b border-border",
-          !isHorizontal && "py-0 px-1 border-b-0 border-r"
-        )}
-      >
-        <Tooltip content="撤销 (Ctrl+Z)" side={isHorizontal ? "top" : "left"}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={undo}
-            disabled={!canUndo()}
-          >
-            <Undo2 size={18} />
+      <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700">
+        <Tooltip content="撤销 (Ctrl+Z)" side="bottom">
+          <Button variant="ghost" size="icon-sm" onClick={undo} disabled={!canUndo()}>
+            <Undo2 size={16} />
           </Button>
         </Tooltip>
-        <Tooltip content="重做 (Ctrl+Y)" side={isHorizontal ? "top" : "left"}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={redo}
-            disabled={!canRedo()}
-          >
-            <Redo2 size={18} />
+        <Tooltip content="重做 (Ctrl+Y)" side="bottom">
+          <Button variant="ghost" size="icon-sm" onClick={redo} disabled={!canRedo()}>
+            <Redo2 size={16} />
           </Button>
         </Tooltip>
-        <Tooltip content="删除选中 (Delete)" side={isHorizontal ? "top" : "left"}>
+        <Tooltip content="删除选中 (Delete)" side="bottom">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -211,116 +166,86 @@ export function Toolbar({
             }}
             disabled={selectedIds.length === 0}
           >
-            <X size={18} />
+            <X size={16} />
           </Button>
         </Tooltip>
-        <Tooltip content="清空所有标注" side={isHorizontal ? "top" : "left"}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={clearAnnotations}
-            disabled={!image}
-          >
-            <Trash2 size={18} />
+        <Tooltip content="清空所有标注" side="bottom">
+          <Button variant="ghost" size="icon-sm" onClick={clearAnnotations} disabled={!image}>
+            <Trash2 size={16} />
           </Button>
         </Tooltip>
       </div>
 
       {/* 视图控制 */}
-      <div
-        className={cn(
-          "flex gap-1",
-          isHorizontal ? "flex-row" : "flex-col",
-          "py-1 border-b border-border",
-          !isHorizontal && "py-0 px-1 border-b-0 border-r"
-        )}
-      >
-        <Tooltip content="放大" side={isHorizontal ? "top" : "left"}>
+      <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700">
+        <Tooltip content="放大" side="bottom">
           <Button variant="ghost" size="icon-sm" onClick={handleZoomIn} disabled={!image}>
-            <ZoomIn size={18} />
+            <ZoomIn size={16} />
           </Button>
         </Tooltip>
-        <Tooltip content="缩小" side={isHorizontal ? "top" : "left"}>
+        <Tooltip content="缩小" side="bottom">
           <Button variant="ghost" size="icon-sm" onClick={handleZoomOut} disabled={!image}>
-            <ZoomOut size={18} />
+            <ZoomOut size={16} />
           </Button>
         </Tooltip>
-        <Tooltip content="重置视图" side={isHorizontal ? "top" : "left"}>
+        <Tooltip content="重置视图" side="bottom">
           <Button variant="ghost" size="icon-sm" onClick={resetView} disabled={!image}>
-            <RotateCcw size={18} />
+            <RotateCcw size={16} />
           </Button>
         </Tooltip>
-      </div>
-
-      {/* 设置 */}
-      <div className={cn("flex gap-1", isHorizontal ? "flex-row" : "flex-col")}>
-        <Tooltip content="设置" side={isHorizontal ? "top" : "left"}>
-          <Button variant="ghost" size="icon-sm" onClick={onOpenSettings}>
-            <Settings size={18} />
-          </Button>
-        </Tooltip>
-      </div>
-
-      {/* 缩放比例显示 */}
-      {image && (
-        <div
-          className={cn(
-            "flex items-center justify-center px-2 text-xs text-muted-foreground",
-            "min-w-[50px]"
-          )}
-        >
-          {Math.round(viewState.scale * 100)}%
-        </div>
-      )}
-
-      {/* 窗口控制 */}
-      <div
-        className={cn(
-          "flex gap-1",
-          isHorizontal ? "flex-row" : "flex-col",
-          "pl-1 border-l border-border",
-          !isHorizontal && "pl-0 pt-1 border-l-0 border-t"
+        {/* 缩放比例显示 */}
+        {image && (
+          <span className="text-xs text-muted-foreground min-w-[40px] text-center">
+            {Math.round(viewState.scale * 100)}%
+          </span>
         )}
-      >
-        <Tooltip content="最小化" side={isHorizontal ? "top" : "left"}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => getCurrentWindow().minimize()}
-          >
-            <Minimize2 size={18} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="最大化" side={isHorizontal ? "top" : "left"}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => getCurrentWindow().toggleMaximize()}
-          >
-            <Maximize2 size={18} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="关闭" side={isHorizontal ? "top" : "left"}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onClose}
-            className="hover:bg-red-500/20 hover:text-red-500"
-          >
-            <XCircle size={18} />
+      </div>
+
+      {/* 可拖动区域 - 伪装为标题栏 */}
+      <div 
+        data-tauri-drag-region
+        className="flex-1 h-full"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      />
+
+      {/* 右侧工具区 */}
+      <div className="flex items-center gap-0.5 px-1 border-l border-gray-200 dark:border-gray-700">
+        {/* 自定义动作 */}
+        {customActions.length > 0 && (
+          <Tooltip content="自定义动作" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={onOpenCustomActions}>
+              <Terminal size={16} />
+            </Button>
+          </Tooltip>
+        )}
+        <Tooltip content="设置" side="bottom">
+          <Button variant="ghost" size="icon-sm" onClick={onOpenSettings}>
+            <Settings size={16} />
           </Button>
         </Tooltip>
       </div>
+
+      {/* 关闭按钮 */}
+      <Tooltip content="关闭" side="bottom">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onClose}
+          className="h-8 w-10 hover:bg-red-500/20 hover:text-red-500"
+        >
+          <X size={18} />
+        </Button>
+      </Tooltip>
     </div>
   );
 }
 
 // 工具配置面板（浮动）
 export function FloatingToolConfig() {
-  const { currentTool, toolbarOrientation, image } = useEditorStore();
+  const { currentTool, image, selectedIds } = useEditorStore();
 
-  // 只有绘图工具才显示配置面板
-  const showConfig = [
+  // 绘图工具显示工具配置面板
+  const isDrawingTool = [
     "rectangle",
     "ellipse",
     "arrow",
@@ -331,23 +256,30 @@ export function FloatingToolConfig() {
     "blur",
   ].includes(currentTool);
 
-  if (!showConfig || !image) return null;
+  // 选中标注时显示标注属性面板
+  const hasSelection = selectedIds.length > 0;
 
-  const isHorizontal = toolbarOrientation === "horizontal";
+  // 显示条件：绘图工具 或 有选中的标注
+  const showConfig = isDrawingTool || hasSelection;
+
+  if (!showConfig || !image) return null;
 
   return (
     <div
       className={cn(
-        "absolute z-10 p-3 rounded-xl",
-        "bg-white/90 dark:bg-gray-900/95 backdrop-blur-md",
+        "absolute z-10 p-2 rounded-lg",
+        "bg-white dark:bg-gray-900",
         "border border-gray-200 dark:border-gray-700",
-        "shadow-[0_4px_20px_rgba(0,0,0,0.15)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.4)]",
-        isHorizontal
-          ? "bottom-20 left-1/2 -translate-x-1/2" // 移到下方工具栏上方
-          : "right-20 top-1/2 -translate-y-1/2"   // 移到右侧工具栏左侧
+        "shadow-lg",
+        "top-4 left-4" // 位于画布左上角
       )}
     >
-      <ToolConfigPanel orientation={isHorizontal ? "horizontal" : "vertical"} />
+      {/* 有选中的标注时显示标注属性面板，否则显示工具配置面板 */}
+      {hasSelection ? (
+        <SelectedAnnotationConfig orientation="horizontal" />
+      ) : (
+        <ToolConfigPanel orientation="horizontal" />
+      )}
     </div>
   );
 }

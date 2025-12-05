@@ -9,6 +9,7 @@ import {
   Circle,
   Group,
   Image as KonvaImage,
+  Shape,
 } from "react-konva";
 import Konva from "konva";
 import type { Annotation } from "@/types";
@@ -99,38 +100,141 @@ export function RenderAnnotation({
         />
       );
 
-    case "arrow":
+    case "arrow": {
+      // 计算边界框以便整个区域可拖动
+      const arrowPoints = annotation.points;
+      const arrowMinX = Math.min(arrowPoints[0], arrowPoints[2]);
+      const arrowMaxX = Math.max(arrowPoints[0], arrowPoints[2]);
+      const arrowMinY = Math.min(arrowPoints[1], arrowPoints[3]);
+      const arrowMaxY = Math.max(arrowPoints[1], arrowPoints[3]);
+      const arrowPadding = Math.max(20, annotation.strokeWidth * 2) / scale;
+      
+      // 实心箭头样式：绘制一个填充的多边形
+      if (annotation.arrowStyle === "filled") {
+        const [x1, y1, x2, y2] = arrowPoints;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len === 0) return null;
+        
+        // 单位向量
+        const ux = dx / len;
+        const uy = dy / len;
+        // 垂直向量
+        const px = -uy;
+        const py = ux;
+        
+        // 箭头头部大小
+        const headLength = Math.min(len * 0.35, 40 / scale);
+        const headWidth = headLength * 0.6;
+        // 箭身宽度（从起点到箭头底部逐渐变宽）
+        const tailWidth = (annotation.strokeWidth * 0.8) / scale;
+        const bodyWidth = headWidth * 0.35;
+        
+        // 箭头各点坐标
+        const headBase = { x: x2 - ux * headLength, y: y2 - uy * headLength };
+        const filledArrowPoints = [
+          // 起点（尾部，细）
+          x1 + px * tailWidth, y1 + py * tailWidth,
+          // 箭身左侧到箭头底部
+          headBase.x + px * bodyWidth, headBase.y + py * bodyWidth,
+          // 箭头左翼
+          headBase.x + px * headWidth, headBase.y + py * headWidth,
+          // 箭头尖端
+          x2, y2,
+          // 箭头右翼
+          headBase.x - px * headWidth, headBase.y - py * headWidth,
+          // 箭身右侧到箭头底部
+          headBase.x - px * bodyWidth, headBase.y - py * bodyWidth,
+          // 起点（尾部，细）
+          x1 - px * tailWidth, y1 - py * tailWidth,
+        ];
+        
+        return (
+          <Group
+            ref={nodeRef as React.RefObject<Konva.Group>}
+            {...commonProps}
+          >
+            <Rect
+              x={arrowMinX - arrowPadding}
+              y={arrowMinY - arrowPadding}
+              width={arrowMaxX - arrowMinX + arrowPadding * 2}
+              height={arrowMaxY - arrowMinY + arrowPadding * 2}
+              fill="transparent"
+            />
+            <Line
+              points={filledArrowPoints}
+              fill={annotation.stroke}
+              closed={true}
+              listening={false}
+            />
+          </Group>
+        );
+      }
+      
+      // 普通箭头样式
       return (
-        <Arrow
-          ref={nodeRef as React.RefObject<Konva.Arrow>}
+        <Group
+          ref={nodeRef as React.RefObject<Konva.Group>}
           {...commonProps}
-          points={annotation.points}
-          stroke={annotation.stroke}
-          strokeWidth={compensatedStrokeWidth(annotation.strokeWidth)}
-          fill={annotation.stroke}
-          pointerLength={(annotation.pointerLength || 15) / scale}
-          pointerWidth={(annotation.pointerWidth || 12) / scale}
-          dash={annotation.lineStyle === "dashed" ? [10 / scale, 5 / scale] : undefined}
-          lineCap="round"
-          lineJoin="round"
-          hitStrokeWidth={Math.max(20 / scale, compensatedStrokeWidth(annotation.strokeWidth) * 3)}
-        />
+        >
+          {/* 透明点击区域，覆盖整个边界框 */}
+          <Rect
+            x={arrowMinX - arrowPadding}
+            y={arrowMinY - arrowPadding}
+            width={arrowMaxX - arrowMinX + arrowPadding * 2}
+            height={arrowMaxY - arrowMinY + arrowPadding * 2}
+            fill="transparent"
+          />
+          <Arrow
+            points={arrowPoints}
+            stroke={annotation.stroke}
+            strokeWidth={compensatedStrokeWidth(annotation.strokeWidth)}
+            fill={annotation.stroke}
+            pointerLength={(annotation.pointerLength || 15) / scale}
+            pointerWidth={(annotation.pointerWidth || 12) / scale}
+            dash={annotation.lineStyle === "dashed" ? [10 / scale, 5 / scale] : undefined}
+            lineCap="round"
+            lineJoin="round"
+            listening={false}
+          />
+        </Group>
       );
+    }
 
-    case "line":
+    case "line": {
+      // 计算边界框以便整个区域可拖动
+      const linePoints = annotation.points;
+      const lineMinX = Math.min(linePoints[0], linePoints[2]);
+      const lineMaxX = Math.max(linePoints[0], linePoints[2]);
+      const lineMinY = Math.min(linePoints[1], linePoints[3]);
+      const lineMaxY = Math.max(linePoints[1], linePoints[3]);
+      const linePadding = Math.max(20, annotation.strokeWidth * 2) / scale;
       return (
-        <Line
-          ref={nodeRef as React.RefObject<Konva.Line>}
+        <Group
+          ref={nodeRef as React.RefObject<Konva.Group>}
           {...commonProps}
-          points={annotation.points}
-          stroke={annotation.stroke}
-          strokeWidth={compensatedStrokeWidth(annotation.strokeWidth)}
-          dash={annotation.lineStyle === "dashed" ? [10 / scale, 5 / scale] : undefined}
-          lineCap="round"
-          lineJoin="round"
-          hitStrokeWidth={Math.max(20 / scale, compensatedStrokeWidth(annotation.strokeWidth) * 3)}
-        />
+        >
+          {/* 透明点击区域，覆盖整个边界框 */}
+          <Rect
+            x={lineMinX - linePadding}
+            y={lineMinY - linePadding}
+            width={lineMaxX - lineMinX + linePadding * 2}
+            height={lineMaxY - lineMinY + linePadding * 2}
+            fill="transparent"
+          />
+          <Line
+            points={linePoints}
+            stroke={annotation.stroke}
+            strokeWidth={compensatedStrokeWidth(annotation.strokeWidth)}
+            dash={annotation.lineStyle === "dashed" ? [10 / scale, 5 / scale] : undefined}
+            lineCap="round"
+            lineJoin="round"
+            listening={false}
+          />
+        </Group>
       );
+    }
 
     case "text":
       return (
@@ -144,19 +248,43 @@ export function RenderAnnotation({
         />
       );
 
-    case "brush":
+    case "brush": {
+      // 计算画笔的边界框
+      const brushPoints = annotation.points;
+      let brushMinX = Infinity, brushMaxX = -Infinity;
+      let brushMinY = Infinity, brushMaxY = -Infinity;
+      for (let i = 0; i < brushPoints.length; i += 2) {
+        brushMinX = Math.min(brushMinX, brushPoints[i]);
+        brushMaxX = Math.max(brushMaxX, brushPoints[i]);
+        brushMinY = Math.min(brushMinY, brushPoints[i + 1]);
+        brushMaxY = Math.max(brushMaxY, brushPoints[i + 1]);
+      }
+      const brushPadding = Math.max(20, annotation.strokeWidth * 2) / scale;
       return (
-        <Line
-          ref={nodeRef as React.RefObject<Konva.Line>}
+        <Group
+          ref={nodeRef as React.RefObject<Konva.Group>}
           {...commonProps}
-          points={annotation.points}
-          stroke={annotation.stroke}
-          strokeWidth={compensatedStrokeWidth(annotation.strokeWidth)}
-          tension={annotation.tension || 0.5}
-          lineCap={annotation.lineCap || "round"}
-          lineJoin={annotation.lineJoin || "round"}
-        />
+        >
+          {/* 透明点击区域，覆盖整个边界框 */}
+          <Rect
+            x={brushMinX - brushPadding}
+            y={brushMinY - brushPadding}
+            width={brushMaxX - brushMinX + brushPadding * 2}
+            height={brushMaxY - brushMinY + brushPadding * 2}
+            fill="transparent"
+          />
+          <Line
+            points={brushPoints}
+            stroke={annotation.stroke}
+            strokeWidth={compensatedStrokeWidth(annotation.strokeWidth)}
+            tension={annotation.tension || 0.5}
+            lineCap={annotation.lineCap || "round"}
+            lineJoin={annotation.lineJoin || "round"}
+            listening={false}
+          />
+        </Group>
       );
+    }
 
     case "marker":
       return (
@@ -436,7 +564,118 @@ function TextAnnotationRenderer({
 
   // 补偿后的字体大小
   const compensatedFontSize = annotation.fontSize / scale;
+  const compensatedPadding = (annotation.padding || 4) / scale;
 
+  // 气泡样式
+  if (annotation.textStyle === "bubble") {
+    const bubbleStroke = annotation.bubbleStroke || annotation.fill;
+    const bubbleFill = annotation.bubbleFill || "transparent";
+    const strokeWidth = 2 / scale;
+    const radius = 10 / scale;
+    const tailSize = 10 / scale;
+    const tailWidth = 8 / scale;
+    const tailPosition = annotation.bubbleTailPosition || "left";
+    
+    // 临时测量文字大小
+    const tempText = new Konva.Text({
+      text: annotation.text || "双击编辑",
+      fontSize: compensatedFontSize,
+      fontFamily: annotation.fontFamily,
+      padding: compensatedPadding,
+    });
+    const textWidth = tempText.width();
+    const textHeight = tempText.height();
+    tempText.destroy();
+    
+    // 使用 Shape 绘制带圆角的气泡
+    const drawBubble = (context: Konva.Context, shape: Konva.Shape) => {
+      const w = textWidth;
+      const h = textHeight;
+      const r = Math.min(radius, w / 2, h / 2);
+      
+      context.beginPath();
+      // 左上角
+      context.moveTo(r, 0);
+      // 上边
+      context.lineTo(w - r, 0);
+      // 右上角圆弧
+      context.arcTo(w, 0, w, r, r);
+      // 右边
+      context.lineTo(w, h - r);
+      // 右下角圆弧
+      context.arcTo(w, h, w - r, h, r);
+      
+      if (tailPosition === "right") {
+        // 尾巴在右边
+        context.lineTo(w - tailWidth, h);
+        context.lineTo(w - tailWidth / 2, h + tailSize);
+        context.lineTo(w - tailWidth * 2, h);
+      }
+      
+      // 下边
+      if (tailPosition === "left") {
+        context.lineTo(tailWidth * 2, h);
+        // 尾巴在左边
+        context.lineTo(tailWidth / 2, h + tailSize);
+        context.lineTo(tailWidth, h);
+      }
+      
+      context.lineTo(r, h);
+      // 左下角圆弧
+      context.arcTo(0, h, 0, h - r, r);
+      // 左边
+      context.lineTo(0, r);
+      // 左上角圆弧
+      context.arcTo(0, 0, r, 0, r);
+      context.closePath();
+      
+      context.fillStrokeShape(shape);
+    };
+    
+    return (
+      <Group
+        ref={(node) => {
+          if (nodeRef) {
+            (nodeRef as React.MutableRefObject<Konva.Node | null>).current = node;
+          }
+        }}
+        {...commonProps}
+      >
+        {/* 气泡背景 - 使用 Rect 作为点击区域 */}
+        <Rect
+          x={0}
+          y={0}
+          width={textWidth}
+          height={textHeight + tailSize}
+          fill="transparent"
+          onClick={handleClick}
+          onTap={handleClick}
+          onDblClick={handleDblClick}
+          onDblTap={handleDblClick}
+        />
+        {/* 气泡形状 */}
+        <Shape
+          sceneFunc={drawBubble}
+          fill={bubbleFill}
+          stroke={bubbleStroke}
+          strokeWidth={strokeWidth}
+          listening={false}
+        />
+        {/* 文字 */}
+        <Text
+          ref={textRef}
+          text={annotation.text}
+          fontSize={compensatedFontSize}
+          fontFamily={annotation.fontFamily}
+          fill={annotation.fill}
+          padding={compensatedPadding}
+          listening={false}
+        />
+      </Group>
+    );
+  }
+
+  // 普通样式
   return (
     <Text
       ref={(node) => {
@@ -450,7 +689,7 @@ function TextAnnotationRenderer({
       fontSize={compensatedFontSize}
       fontFamily={annotation.fontFamily}
       fill={annotation.fill}
-      padding={(annotation.padding || 4) / scale}
+      padding={compensatedPadding}
       onClick={handleClick}
       onTap={handleClick}
       onDblClick={handleDblClick}

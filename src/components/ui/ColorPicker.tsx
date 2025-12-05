@@ -70,7 +70,7 @@ export function ColorPicker({ value, onChange, className }: ColorPickerProps) {
       {isOpen && (
         <div
           className={cn(
-            "absolute z-50 bottom-full mb-2 p-3 rounded-lg shadow-xl",
+            "absolute z-50 top-full mt-2 p-3 rounded-lg shadow-xl",
             "bg-white/95 dark:bg-gray-800/95 backdrop-blur-md",
             "border border-gray-200 dark:border-gray-700",
             "animate-in fade-in-0 zoom-in-95"

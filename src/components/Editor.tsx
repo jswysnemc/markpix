@@ -11,6 +11,7 @@ import { CustomActionsPanel } from "./CustomActionsPanel";
 import { SettingsDialog } from "./SettingsDialog";
 import type { CustomAction, ImageInfo } from "@/types";
 import Konva from "konva";
+import { Keyboard, Mouse, Zap, FolderOpen } from "lucide-react";
 
 // 工具栏高度和边距常量
 const TOOLBAR_HEIGHT = 48;
@@ -647,52 +648,51 @@ export function Editor() {
     image,
   ]);
 
+  const [showCustomActions, setShowCustomActions] = useState(false);
+
   return (
     <div className="flex flex-col w-screen h-screen bg-muted/30">
-      {/* 窗口拖动区域 */}
-      <div 
-        data-tauri-drag-region 
-        className="absolute top-0 left-0 right-0 h-8 z-50 cursor-move"
+      {/* 顶部工具栏 */}
+      <Toolbar
+        onOpenFile={handleOpenFile}
+        onSave={handleSave}
+        onCopy={handleCopy}
+        onOpenSettings={() => setShowSettings(true)}
+        onClose={handleClose}
+        onInsertImage={handleInsertImage}
+        onOpenCustomActions={() => setShowCustomActions(!showCustomActions)}
       />
       
-      {/* 画布区域 */}
-      <div ref={containerRef} className="relative flex-1 overflow-hidden">
+      {/* 画布区域 - 顶部留出工具栏空间 */}
+      <div ref={containerRef} className="relative flex-1 overflow-hidden mt-10">
         {containerSize.width > 0 && containerSize.height > 0 && (
           <AnnotationCanvas
             containerWidth={containerSize.width}
-            containerHeight={containerSize.height}
+            containerHeight={containerSize.height - 40}
           />
         )}
-
-        {/* 工具栏 */}
-        <Toolbar
-          onOpenFile={handleOpenFile}
-          onSave={handleSave}
-          onCopy={handleCopy}
-          onOpenSettings={() => setShowSettings(true)}
-          onClose={handleClose}
-          onInsertImage={handleInsertImage}
-        />
 
         {/* 工具配置面板 */}
         <FloatingToolConfig />
 
         {/* 自定义动作面板 */}
-        {image && <CustomActionsPanel getCanvasDataUrl={getCanvasDataUrl} imagePath={image?.path} />}
+        {showCustomActions && image && (
+          <CustomActionsPanel getCanvasDataUrl={getCanvasDataUrl} imagePath={image?.path} />
+        )}
 
         {/* 欢迎提示 */}
         {!image && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="text-center text-muted-foreground max-w-lg">
               <p className="text-xl font-medium mb-4">欢迎使用 MarkPix</p>
-              <p className="text-sm mb-6">
-                点击工具栏的 📂 打开图片，或按 <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Ctrl+V</kbd> 粘贴剪贴板图片
+              <p className="text-sm mb-6 flex items-center justify-center gap-1">
+                点击工具栏的 <FolderOpen size={16} className="inline" /> 打开图片，或按 <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Ctrl+V</kbd> 粘贴剪贴板图片
               </p>
               
               <div className="grid grid-cols-2 gap-6 text-left text-xs">
                 {/* 快捷键 */}
                 <div>
-                  <p className="font-medium text-sm mb-2 text-foreground">⌨️ 快捷键</p>
+                  <p className="font-medium text-sm mb-2 text-foreground flex items-center gap-1"><Keyboard size={14} /> 快捷键</p>
                   <div className="space-y-1">
                     <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">V</kbd> 选择工具</p>
                     <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">H</kbd> 平移画布</p>
@@ -710,23 +710,23 @@ export function Editor() {
 
                 {/* 鼠标操作 */}
                 <div>
-                  <p className="font-medium text-sm mb-2 text-foreground">🖱️ 鼠标操作</p>
+                  <p className="font-medium text-sm mb-2 text-foreground flex items-center gap-1"><Mouse size={14} /> 鼠标操作</p>
                   <div className="space-y-1">
                     <p><span className="font-medium">左键</span> 绘制/选择标注</p>
                     <p><span className="font-medium">左键拖动</span> 移动标注/画布</p>
-                    <p><span className="font-medium">右键</span> 取消绘制</p>
+                    <p><span className="font-medium">右键</span> 取消绘制/切换选择工具</p>
                     <p><span className="font-medium">中键拖动</span> 平移画布</p>
                     <p><span className="font-medium">滚轮</span> 缩放画布</p>
                     <p><span className="font-medium">选中+滚轮</span> 调节属性</p>
                   </div>
                   
-                  <p className="font-medium text-sm mt-4 mb-2 text-foreground">⚡ 常用操作</p>
+                  <p className="font-medium text-sm mt-4 mb-2 text-foreground flex items-center gap-1"><Zap size={14} /> 常用操作</p>
                   <div className="space-y-1">
                     <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Z</kbd> 撤销</p>
                     <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Y</kbd> 重做</p>
                     <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+S</kbd> 保存</p>
                     <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+C</kbd> 复制</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Del</kbd> 删除选中</p>
+                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Del/Backspace</kbd> 删除选中</p>
                   </div>
                 </div>
               </div>
@@ -840,7 +840,7 @@ export function Editor() {
       {/* Toast 提示 */}
       {toast && (
         <div
-          className={`fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300 ${
+          className={`fixed top-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300 ${
             toast.type === "success"
               ? "bg-green-500 text-white"
               : "bg-red-500 text-white"
