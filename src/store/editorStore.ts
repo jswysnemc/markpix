@@ -29,6 +29,10 @@ const defaultToolConfig: ToolConfig = {
   fontSize: 18,
   fontFamily: "system-ui",
   textBackgroundColor: "transparent",
+  textStyle: "normal",
+  bubbleStroke: "", // 空字符串表示使用文字颜色
+  bubbleFill: "transparent",
+  bubbleTailPosition: "left",
   brushSize: 4,
   markerStyle: "filled",
   markerType: "number",
@@ -36,6 +40,7 @@ const defaultToolConfig: ToolConfig = {
   blurRadius: 10,
   blurCornerRadius: 10, // 马赛克圆角，默认为10
   cornerRadius: 0, // 矩形圆角，默认为0
+  arrowStyle: "filled", // 默认实心箭头
 };
 
 /**
@@ -63,6 +68,7 @@ interface EditorState {
   annotations: Annotation[];
   addAnnotation: (annotation: Annotation) => void;
   updateAnnotation: (id: string, updates: Partial<Annotation>) => void;
+  updateAnnotations: (ids: string[], updates: Partial<Annotation>) => void;
   deleteAnnotation: (id: string) => void;
   clearAnnotations: () => void;
 
@@ -166,6 +172,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       annotations: state.annotations.map((a) =>
         a.id === id ? ({ ...a, ...updates } as Annotation) : a
+      ),
+    }));
+  },
+  updateAnnotations: (ids, updates) => {
+    set((state) => ({
+      annotations: state.annotations.map((a) =>
+        ids.includes(a.id) ? ({ ...a, ...updates } as Annotation) : a
       ),
     }));
   },
@@ -422,6 +435,7 @@ export function createAnnotation(
         stroke: config.strokeColor,
         strokeWidth: config.strokeWidth,
         lineStyle: config.lineStyle,
+        arrowStyle: config.arrowStyle,
         pointerLength: 15,
         pointerWidth: 12,
       };
@@ -446,6 +460,10 @@ export function createAnnotation(
         fontSize: config.fontSize,
         fontFamily: config.fontFamily,
         fill: config.strokeColor,
+        textStyle: config.textStyle,
+        bubbleStroke: config.bubbleStroke || config.strokeColor,
+        bubbleFill: config.bubbleFill,
+        bubbleTailPosition: config.bubbleTailPosition,
         backgroundColor: config.textBackgroundColor,
         padding: 4,
       };

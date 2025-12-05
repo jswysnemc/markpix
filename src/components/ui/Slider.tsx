@@ -12,6 +12,7 @@ interface SliderProps {
   showValue?: boolean;
   editable?: boolean;
   className?: string;
+  previewColor?: string; // 显示预览圆点的颜色
 }
 
 export function Slider({
@@ -24,6 +25,7 @@ export function Slider({
   showValue = true,
   editable = true,
   className,
+  previewColor,
 }: SliderProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [inputValue, setInputValue] = useState(String(Math.round(value)));
@@ -79,6 +81,17 @@ export function Slider({
         <span className="text-xs text-muted-foreground whitespace-nowrap">
           {label}
         </span>
+      )}
+      {/* 预览圆点 */}
+      {previewColor && (
+        <div
+          className="flex-shrink-0 rounded-full"
+          style={{
+            width: Math.max(4, Math.min(value, 20)),
+            height: Math.max(4, Math.min(value, 20)),
+            backgroundColor: previewColor,
+          }}
+        />
       )}
       <input
         type="range"

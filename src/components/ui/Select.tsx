@@ -24,7 +24,9 @@ export function Select({
   className,
 }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // 点击外部关闭
   useEffect(() => {
@@ -39,6 +41,23 @@ export function Select({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // 检测下拉框是否会超出窗口
+  useEffect(() => {
+    if (isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const dropdownHeight = options.length * 32 + 8; // 估算下拉框高度
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      
+      // 如果下方空间不够且上方空间更大，则向上弹出
+      if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
+        setDropUp(true);
+      } else {
+        setDropUp(false);
+      }
+    }
+  }, [isOpen, options.length]);
 
   const selectedOption = options.find((opt) => opt.value === value);
 
@@ -68,10 +87,12 @@ export function Select({
 
       {isOpen && (
         <div
+          ref={dropdownRef}
           className={cn(
-            "absolute z-50 mt-1 w-full rounded-md border border-border",
-            "bg-popover shadow-lg",
-            "animate-in fade-in-0 zoom-in-95"
+            "absolute z-50 w-full rounded-md border border-gray-200 dark:border-gray-700",
+            "bg-white dark:bg-gray-800 shadow-lg max-h-48 overflow-auto",
+            "animate-in fade-in-0 zoom-in-95",
+            dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >
           {options.map((option) => (

@@ -119,6 +119,14 @@ export function AnnotationCanvas({
     return { x: imageX, y: imageY };
   }, [getImageFit, viewState]);
 
+  // 当标注更新时，强制重绘 Layer
+  useEffect(() => {
+    const layer = layerRef.current;
+    if (layer) {
+      layer.batchDraw();
+    }
+  }, [annotations]);
+
   // 更新 Transformer 和删除按钮位置
   useEffect(() => {
     const transformer = transformerRef.current;
@@ -888,7 +896,7 @@ export function AnnotationCanvas({
           {/* 渲染所有标注 */}
           {annotations.map((annotation) => (
             <RenderAnnotation
-              key={annotation.id}
+              key={`${annotation.id}-${JSON.stringify(annotation)}`}
               annotation={annotation}
               isSelected={selectedIds.includes(annotation.id)}
               onSelect={(e) => handleAnnotationSelect(annotation.id, e)}

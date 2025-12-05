@@ -1,53 +1,79 @@
-// 工具配置面板
+// 选中标注的属性配置面板
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/store/editorStore";
 import { ColorPicker } from "@/components/ui/ColorPicker";
 import { Slider } from "@/components/ui/Slider";
 import { Select } from "@/components/ui/Select";
-import { Button } from "@/components/ui/Button";
-import { RotateCcw } from "lucide-react";
+import type { Annotation } from "@/types";
 
-interface ToolConfigPanelProps {
+interface SelectedAnnotationConfigProps {
   orientation: "horizontal" | "vertical";
 }
 
-export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
-  const { currentTool, toolConfig, setToolConfig, resetMarkerCounter, markerCounter } = useEditorStore();
+export function SelectedAnnotationConfig({ orientation }: SelectedAnnotationConfigProps) {
+  const { selectedIds, annotations, updateAnnotations, pushHistory } = useEditorStore();
 
   const isHorizontal = orientation === "horizontal";
 
-  // 根据当前工具显示不同配置
+  // 获取选中的标注
+  const selectedAnnotations = annotations.filter((a) => selectedIds.includes(a.id));
+  
+  // 如果没有选中或选中多个不同类型，不显示配置
+  if (selectedAnnotations.length === 0) return null;
+  
+  // 获取第一个选中的标注作为参考
+  const firstAnnotation = selectedAnnotations[0];
+  const annotationType = firstAnnotation.type;
+  
+  // 检查是否所有选中的标注类型相同
+  const allSameType = selectedAnnotations.every((a) => a.type === annotationType);
+  
+  if (!allSameType) {
+    return (
+      <div className="text-xs text-muted-foreground">
+        选中了多种类型的标注
+      </div>
+    );
+  }
+
+  // 更新所有选中标注的属性（批量更新）
+  const updateSelectedAnnotations = (updates: Partial<Annotation>) => {
+    updateAnnotations(selectedIds, updates);
+    pushHistory();
+  };
+
+  // 根据标注类型渲染不同的配置
   const renderConfig = () => {
-    switch (currentTool) {
-      case "rectangle":
+    switch (annotationType) {
+      case "rectangle": {
+        const rect = firstAnnotation as Extract<Annotation, { type: "rectangle" }>;
         return (
           <>
             <ConfigItem label="边框颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.strokeColor}
-                onChange={(color) => setToolConfig({ strokeColor: color })}
+                value={rect.stroke}
+                onChange={(color) => updateSelectedAnnotations({ stroke: color })}
               />
             </ConfigItem>
             <ConfigItem label="填充颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.fillColor}
-                onChange={(color) => setToolConfig({ fillColor: color })}
+                value={rect.fill}
+                onChange={(color) => updateSelectedAnnotations({ fill: color })}
               />
             </ConfigItem>
             <ConfigItem label="边框粗细" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.strokeWidth}
-                onChange={(v) => setToolConfig({ strokeWidth: v })}
+                value={rect.strokeWidth}
+                onChange={(v) => updateSelectedAnnotations({ strokeWidth: v })}
                 min={1}
                 max={20}
                 className="w-24"
-                previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
             <ConfigItem label="填充透明度" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.fillOpacity * 100}
-                onChange={(v) => setToolConfig({ fillOpacity: v / 100 })}
+                value={rect.fillOpacity * 100}
+                onChange={(v) => updateSelectedAnnotations({ fillOpacity: v / 100 })}
                 min={0}
                 max={100}
                 className="w-24"
@@ -55,8 +81,8 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
             <ConfigItem label="圆角" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.cornerRadius}
-                onChange={(v) => setToolConfig({ cornerRadius: v })}
+                value={rect.cornerRadius || 0}
+                onChange={(v) => updateSelectedAnnotations({ cornerRadius: v })}
                 min={0}
                 max={50}
                 className="w-24"
@@ -64,36 +90,37 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
           </>
         );
+      }
 
-      case "ellipse":
+      case "ellipse": {
+        const ellipse = firstAnnotation as Extract<Annotation, { type: "ellipse" }>;
         return (
           <>
             <ConfigItem label="边框颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.strokeColor}
-                onChange={(color) => setToolConfig({ strokeColor: color })}
+                value={ellipse.stroke}
+                onChange={(color) => updateSelectedAnnotations({ stroke: color })}
               />
             </ConfigItem>
             <ConfigItem label="填充颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.fillColor}
-                onChange={(color) => setToolConfig({ fillColor: color })}
+                value={ellipse.fill}
+                onChange={(color) => updateSelectedAnnotations({ fill: color })}
               />
             </ConfigItem>
             <ConfigItem label="边框粗细" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.strokeWidth}
-                onChange={(v) => setToolConfig({ strokeWidth: v })}
+                value={ellipse.strokeWidth}
+                onChange={(v) => updateSelectedAnnotations({ strokeWidth: v })}
                 min={1}
                 max={20}
                 className="w-24"
-                previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
             <ConfigItem label="填充透明度" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.fillOpacity * 100}
-                onChange={(v) => setToolConfig({ fillOpacity: v / 100 })}
+                value={ellipse.fillOpacity * 100}
+                onChange={(v) => updateSelectedAnnotations({ fillOpacity: v / 100 })}
                 min={0}
                 max={100}
                 className="w-24"
@@ -101,32 +128,31 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
           </>
         );
+      }
 
-      case "arrow":
+      case "arrow": {
+        const arrow = firstAnnotation as Extract<Annotation, { type: "arrow" }>;
         return (
           <>
             <ConfigItem label="颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.strokeColor}
-                onChange={(color) => setToolConfig({ strokeColor: color })}
+                value={arrow.stroke}
+                onChange={(color) => updateSelectedAnnotations({ stroke: color })}
               />
             </ConfigItem>
             <ConfigItem label="粗细" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.strokeWidth}
-                onChange={(v) => setToolConfig({ strokeWidth: v })}
+                value={arrow.strokeWidth}
+                onChange={(v) => updateSelectedAnnotations({ strokeWidth: v })}
                 min={1}
                 max={20}
                 className="w-24"
-                previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
             <ConfigItem label="箭头样式" isHorizontal={isHorizontal}>
               <Select
-                value={toolConfig.arrowStyle}
-                onChange={(v) =>
-                  setToolConfig({ arrowStyle: v as "normal" | "filled" })
-                }
+                value={arrow.arrowStyle}
+                onChange={(v) => updateSelectedAnnotations({ arrowStyle: v as "normal" | "filled" })}
                 options={[
                   { value: "filled", label: "实心" },
                   { value: "normal", label: "普通" },
@@ -135,10 +161,8 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
             <ConfigItem label="线条样式" isHorizontal={isHorizontal}>
               <Select
-                value={toolConfig.lineStyle}
-                onChange={(v) =>
-                  setToolConfig({ lineStyle: v as "solid" | "dashed" })
-                }
+                value={arrow.lineStyle}
+                onChange={(v) => updateSelectedAnnotations({ lineStyle: v as "solid" | "dashed" })}
                 options={[
                   { value: "solid", label: "实线" },
                   { value: "dashed", label: "虚线" },
@@ -147,32 +171,31 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
           </>
         );
+      }
 
-      case "line":
+      case "line": {
+        const line = firstAnnotation as Extract<Annotation, { type: "line" }>;
         return (
           <>
             <ConfigItem label="颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.strokeColor}
-                onChange={(color) => setToolConfig({ strokeColor: color })}
+                value={line.stroke}
+                onChange={(color) => updateSelectedAnnotations({ stroke: color })}
               />
             </ConfigItem>
             <ConfigItem label="粗细" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.strokeWidth}
-                onChange={(v) => setToolConfig({ strokeWidth: v })}
+                value={line.strokeWidth}
+                onChange={(v) => updateSelectedAnnotations({ strokeWidth: v })}
                 min={1}
                 max={20}
                 className="w-24"
-                previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
             <ConfigItem label="样式" isHorizontal={isHorizontal}>
               <Select
-                value={toolConfig.lineStyle}
-                onChange={(v) =>
-                  setToolConfig({ lineStyle: v as "solid" | "dashed" })
-                }
+                value={line.lineStyle}
+                onChange={(v) => updateSelectedAnnotations({ lineStyle: v as "solid" | "dashed" })}
                 options={[
                   { value: "solid", label: "实线" },
                   { value: "dashed", label: "虚线" },
@@ -181,20 +204,22 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
           </>
         );
+      }
 
-      case "text":
+      case "text": {
+        const text = firstAnnotation as Extract<Annotation, { type: "text" }>;
         return (
           <>
             <ConfigItem label="颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.strokeColor}
-                onChange={(color) => setToolConfig({ strokeColor: color })}
+                value={text.fill}
+                onChange={(color) => updateSelectedAnnotations({ fill: color })}
               />
             </ConfigItem>
             <ConfigItem label="字号" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.fontSize}
-                onChange={(v) => setToolConfig({ fontSize: v })}
+                value={text.fontSize}
+                onChange={(v) => updateSelectedAnnotations({ fontSize: v })}
                 min={12}
                 max={72}
                 className="w-24"
@@ -202,8 +227,8 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
             <ConfigItem label="字体" isHorizontal={isHorizontal}>
               <Select
-                value={toolConfig.fontFamily}
-                onChange={(v) => setToolConfig({ fontFamily: v })}
+                value={text.fontFamily}
+                onChange={(v) => updateSelectedAnnotations({ fontFamily: v })}
                 options={[
                   { value: "system-ui", label: "系统字体" },
                   { value: "serif", label: "衬线体" },
@@ -213,32 +238,32 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
             <ConfigItem label="样式" isHorizontal={isHorizontal}>
               <Select
-                value={toolConfig.textStyle}
-                onChange={(v) => setToolConfig({ textStyle: v as "normal" | "bubble" })}
+                value={text.textStyle}
+                onChange={(v) => updateSelectedAnnotations({ textStyle: v as "normal" | "bubble" })}
                 options={[
                   { value: "normal", label: "普通" },
                   { value: "bubble", label: "气泡" },
                 ]}
               />
             </ConfigItem>
-            {toolConfig.textStyle === "bubble" && (
+            {text.textStyle === "bubble" && (
               <>
                 <ConfigItem label="气泡边框" isHorizontal={isHorizontal}>
                   <ColorPicker
-                    value={toolConfig.bubbleStroke || toolConfig.strokeColor}
-                    onChange={(color) => setToolConfig({ bubbleStroke: color })}
+                    value={text.bubbleStroke || text.fill}
+                    onChange={(color) => updateSelectedAnnotations({ bubbleStroke: color })}
                   />
                 </ConfigItem>
                 <ConfigItem label="气泡背景" isHorizontal={isHorizontal}>
                   <ColorPicker
-                    value={toolConfig.bubbleFill}
-                    onChange={(color) => setToolConfig({ bubbleFill: color })}
+                    value={text.bubbleFill || "transparent"}
+                    onChange={(color) => updateSelectedAnnotations({ bubbleFill: color })}
                   />
                 </ConfigItem>
                 <ConfigItem label="尾巴位置" isHorizontal={isHorizontal}>
                   <Select
-                    value={toolConfig.bubbleTailPosition}
-                    onChange={(v) => setToolConfig({ bubbleTailPosition: v as "left" | "right" })}
+                    value={text.bubbleTailPosition || "left"}
+                    onChange={(v) => updateSelectedAnnotations({ bubbleTailPosition: v as "left" | "right" })}
                     options={[
                       { value: "left", label: "左" },
                       { value: "right", label: "右" },
@@ -249,91 +274,72 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             )}
           </>
         );
+      }
 
-      case "brush":
+      case "brush": {
+        const brush = firstAnnotation as Extract<Annotation, { type: "brush" }>;
         return (
           <>
             <ConfigItem label="颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.strokeColor}
-                onChange={(color) => setToolConfig({ strokeColor: color })}
+                value={brush.stroke}
+                onChange={(color) => updateSelectedAnnotations({ stroke: color })}
               />
             </ConfigItem>
             <ConfigItem label="笔刷大小" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.brushSize}
-                onChange={(v) => setToolConfig({ brushSize: v })}
+                value={brush.strokeWidth}
+                onChange={(v) => updateSelectedAnnotations({ strokeWidth: v })}
                 min={1}
                 max={50}
                 className="w-24"
-                previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
           </>
         );
+      }
 
-      case "marker":
+      case "marker": {
+        const marker = firstAnnotation as Extract<Annotation, { type: "marker" }>;
         return (
           <>
             <ConfigItem label="颜色" isHorizontal={isHorizontal}>
               <ColorPicker
-                value={toolConfig.strokeColor}
-                onChange={(color) => setToolConfig({ strokeColor: color })}
+                value={marker.fill}
+                onChange={(color) => updateSelectedAnnotations({ fill: color, textColor: "#fff" })}
               />
             </ConfigItem>
             <ConfigItem label="大小" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.markerSize}
-                onChange={(v) => setToolConfig({ markerSize: v })}
+                value={marker.size}
+                onChange={(v) => updateSelectedAnnotations({ size: v })}
                 min={20}
                 max={60}
                 className="w-24"
               />
             </ConfigItem>
-            <ConfigItem label="类型" isHorizontal={isHorizontal}>
-              <Select
-                value={toolConfig.markerType}
-                onChange={(v) =>
-                  setToolConfig({ markerType: v as "number" | "letter" })
-                }
-                options={[
-                  { value: "number", label: "数字 (1,2,3)" },
-                  { value: "letter", label: "字母 (A,B,C)" },
-                ]}
-              />
-            </ConfigItem>
             <ConfigItem label="样式" isHorizontal={isHorizontal}>
               <Select
-                value={toolConfig.markerStyle}
-                onChange={(v) =>
-                  setToolConfig({ markerStyle: v as "filled" | "outlined" })
-                }
+                value={marker.markerStyle}
+                onChange={(v) => updateSelectedAnnotations({ markerStyle: v as "filled" | "outlined" })}
                 options={[
                   { value: "filled", label: "实心" },
                   { value: "outlined", label: "空心" },
                 ]}
               />
             </ConfigItem>
-            <ConfigItem label={`当前: ${markerCounter}`} isHorizontal={isHorizontal}>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={resetMarkerCounter}
-                title="重置序号计数器"
-              >
-                <RotateCcw size={14} />
-              </Button>
-            </ConfigItem>
           </>
         );
+      }
 
-      case "blur":
+      case "blur": {
+        const blur = firstAnnotation as Extract<Annotation, { type: "blur" }>;
         return (
           <>
             <ConfigItem label="模糊强度" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.blurRadius}
-                onChange={(v) => setToolConfig({ blurRadius: v })}
+                value={blur.blurRadius}
+                onChange={(v) => updateSelectedAnnotations({ blurRadius: v })}
                 min={5}
                 max={30}
                 className="w-24"
@@ -341,14 +347,23 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
             <ConfigItem label="圆角" isHorizontal={isHorizontal}>
               <Slider
-                value={toolConfig.blurCornerRadius}
-                onChange={(v) => setToolConfig({ blurCornerRadius: v })}
+                value={blur.cornerRadius}
+                onChange={(v) => updateSelectedAnnotations({ cornerRadius: v })}
                 min={0}
                 max={50}
                 className="w-24"
               />
             </ConfigItem>
           </>
+        );
+      }
+
+      case "image":
+        // 图片贴图没有可编辑的颜色属性
+        return (
+          <div className="text-xs text-muted-foreground">
+            图片贴图：可拖动调整位置和大小
+          </div>
         );
 
       default:
