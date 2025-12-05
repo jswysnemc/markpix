@@ -39,3 +39,6 @@ Thumbs.db
 *.tmp
 *.temp
 /tmp/
+
+Cargo.lock
+release/
