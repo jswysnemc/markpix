@@ -145,7 +145,7 @@ icon = "folder"
 - **画布**: Konva.js + react-konva
 - **状态管理**: Zustand
 - **后端**: Tauri 2 + Rust
-- **跨平台**: Windows / macOS / Linux
+- **跨平台**: Linux / windows (未测试） / macOS (未测试)
 
 ## 📄 许可证
 
