@@ -86,156 +86,148 @@ export function Toolbar({
     customActions,
   } = useEditorStore();
 
-  // 缩放控制
-  const handleZoomIn = () => {
-    setViewState({ scale: Math.min(viewState.scale * 1.2, 5) });
-  };
-
-  const handleZoomOut = () => {
-    setViewState({ scale: Math.max(viewState.scale / 1.2, 0.1) });
-  };
+  const handleZoomIn = () => setViewState({ scale: Math.min(viewState.scale * 1.2, 5) });
+  const handleZoomOut = () => setViewState({ scale: Math.max(viewState.scale / 1.2, 0.1) });
 
   return (
-    <div
-      className="absolute top-0 left-0 right-0 z-20 h-10 flex items-center bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"
-    >
-      {/* 文件操作 */}
-      <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700">
-        <Tooltip content="打开文件" side="bottom" className="left-0 translate-x-0">
-          <Button variant="ghost" size="icon-sm" onClick={onOpenFile}>
-            <FolderOpen size={16} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="保存" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={onSave} disabled={!image}>
-            <Download size={16} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="复制到剪贴板" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={onCopy} disabled={!image}>
-            <Copy size={16} />
-          </Button>
-        </Tooltip>
-      </div>
-
-      {/* 绘图工具 */}
-      <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700">
-        {tools.map((tool) => (
-          <Tooltip key={tool.type} content={tool.label} side="bottom">
-            <Button
-              variant={currentTool === tool.type ? "default" : "ghost"}
-              size="icon-sm"
-              onClick={() => {
-                if (tool.type === "image" && onInsertImage) {
-                  onInsertImage();
-                } else {
-                  setCurrentTool(tool.type);
-                }
-              }}
-              disabled={!image && tool.type !== "select"}
-              className={cn(
-                "transition-all duration-150",
-                currentTool === tool.type && "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
-              )}
-            >
-              {tool.icon}
-            </Button>
-          </Tooltip>
-        ))}
-      </div>
-
-      {/* 编辑操作 */}
-      <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700">
-        <Tooltip content="撤销 (Ctrl+Z)" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={undo} disabled={!canUndo()}>
-            <Undo2 size={16} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="重做 (Ctrl+Y)" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={redo} disabled={!canRedo()}>
-            <Redo2 size={16} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="删除选中 (Delete)" side="bottom">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => {
-              selectedIds.forEach((id) => deleteAnnotation(id));
-              clearSelection();
-            }}
-            disabled={selectedIds.length === 0}
-          >
-            <X size={16} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="清空所有标注" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={clearAnnotations} disabled={!image}>
-            <Trash2 size={16} />
-          </Button>
-        </Tooltip>
-      </div>
-
-      {/* 视图控制 */}
-      <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700">
-        <Tooltip content="放大" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={handleZoomIn} disabled={!image}>
-            <ZoomIn size={16} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="缩小" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={handleZoomOut} disabled={!image}>
-            <ZoomOut size={16} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="重置视图" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={resetView} disabled={!image}>
-            <RotateCcw size={16} />
-          </Button>
-        </Tooltip>
-        {/* 缩放比例显示 */}
-        {image && (
-          <span className="text-xs text-muted-foreground min-w-[40px] text-center">
-            {Math.round(viewState.scale * 100)}%
-          </span>
-        )}
-      </div>
-
-      {/* 可拖动区域 - 伪装为标题栏 */}
+    // 1. 最外层容器：仅负责定位和尺寸，没有任何事件逻辑
+    <div className="absolute top-0 left-0 right-0 h-10 z-50 select-none">
+      
+      {/* 2. 拖拽层 (底层 z-0) - 独立的空 div，专门接收拖拽信号 */}
       <div 
+        className="absolute inset-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 z-0"
         data-tauri-drag-region
-        className="flex-1 h-full"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       />
 
-      {/* 右侧工具区 */}
-      <div className="flex items-center gap-0.5 px-1 border-l border-gray-200 dark:border-gray-700">
-        {/* 自定义动作 */}
-        {customActions.length > 0 && (
-          <Tooltip content="自定义动作" side="bottom">
-            <Button variant="ghost" size="icon-sm" onClick={onOpenCustomActions}>
-              <Terminal size={16} />
+      {/* 3. 交互层 (顶层 z-10) - pointer-events-none 让点击穿透到拖拽层 */}
+      <div className="absolute inset-0 flex items-center z-10 pointer-events-none">
+        
+        {/* 文件操作 - pointer-events-auto 恢复交互 */}
+        <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700 pointer-events-auto">
+          <Tooltip content="打开文件" side="bottom" className="left-0 translate-x-0">
+            <Button variant="ghost" size="icon-sm" onClick={onOpenFile}>
+              <FolderOpen size={16} />
             </Button>
           </Tooltip>
-        )}
-        <Tooltip content="设置" side="bottom">
-          <Button variant="ghost" size="icon-sm" onClick={onOpenSettings}>
-            <Settings size={16} />
-          </Button>
-        </Tooltip>
-      </div>
+          <Tooltip content="保存" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={onSave} disabled={!image}>
+              <Download size={16} />
+            </Button>
+          </Tooltip>
+          <Tooltip content="复制到剪贴板" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={onCopy} disabled={!image}>
+              <Copy size={16} />
+            </Button>
+          </Tooltip>
+        </div>
 
-      {/* 关闭按钮 */}
-      <Tooltip content="关闭" side="bottom">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onClose}
-          className="h-8 w-10 hover:bg-red-500/20 hover:text-red-500"
-        >
-          <X size={18} />
-        </Button>
-      </Tooltip>
+        {/* 绘图工具 */}
+        <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700 pointer-events-auto">
+          {tools.map((tool) => (
+            <Tooltip key={tool.type} content={tool.label} side="bottom">
+              <Button
+                variant={currentTool === tool.type ? "default" : "ghost"}
+                size="icon-sm"
+                onClick={() => tool.type === "image" && onInsertImage ? onInsertImage() : setCurrentTool(tool.type)}
+                disabled={!image && tool.type !== "select"}
+                className={cn(
+                  "transition-all duration-150",
+                  currentTool === tool.type && "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
+                )}
+              >
+                {tool.icon}
+              </Button>
+            </Tooltip>
+          ))}
+        </div>
+
+        {/* 编辑操作 */}
+        <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700 pointer-events-auto">
+          <Tooltip content="撤销 (Ctrl+Z)" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={undo} disabled={!canUndo()}>
+              <Undo2 size={16} />
+            </Button>
+          </Tooltip>
+          <Tooltip content="重做 (Ctrl+Y)" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={redo} disabled={!canRedo()}>
+              <Redo2 size={16} />
+            </Button>
+          </Tooltip>
+          <Tooltip content="删除选中 (Delete)" side="bottom">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => { selectedIds.forEach((id) => deleteAnnotation(id)); clearSelection(); }}
+              disabled={selectedIds.length === 0}
+            >
+              <X size={16} />
+            </Button>
+          </Tooltip>
+          <Tooltip content="清空所有标注" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={clearAnnotations} disabled={!image}>
+              <Trash2 size={16} />
+            </Button>
+          </Tooltip>
+        </div>
+
+        {/* 视图控制 */}
+        <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700 pointer-events-auto">
+          <Tooltip content="放大" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={handleZoomIn} disabled={!image}>
+              <ZoomIn size={16} />
+            </Button>
+          </Tooltip>
+          <Tooltip content="缩小" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={handleZoomOut} disabled={!image}>
+              <ZoomOut size={16} />
+            </Button>
+          </Tooltip>
+          <Tooltip content="重置视图" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={resetView} disabled={!image}>
+              <RotateCcw size={16} />
+            </Button>
+          </Tooltip>
+          {image && (
+            <span className="text-xs text-muted-foreground min-w-[40px] text-center pointer-events-none">
+              {Math.round(viewState.scale * 100)}%
+            </span>
+          )}
+        </div>
+
+        {/* 中间空白区域 - 点击会穿透到拖拽层 */}
+        <div className="flex-1" />
+
+        {/* 右侧工具区 */}
+        <div className="flex items-center gap-0.5 px-1 border-l border-gray-200 dark:border-gray-700 pointer-events-auto">
+          {customActions.length > 0 && (
+            <Tooltip content="自定义动作" side="bottom">
+              <Button variant="ghost" size="icon-sm" onClick={onOpenCustomActions}>
+                <Terminal size={16} />
+              </Button>
+            </Tooltip>
+          )}
+          <Tooltip content="设置" side="bottom">
+            <Button variant="ghost" size="icon-sm" onClick={onOpenSettings}>
+              <Settings size={16} />
+            </Button>
+          </Tooltip>
+        </div>
+
+        {/* 关闭按钮 */}
+        <div className="pointer-events-auto">
+          <Tooltip content="关闭" side="bottom">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onClose}
+              className="h-8 w-10 hover:bg-red-500/20 hover:text-red-500"
+            >
+              <X size={18} />
+            </Button>
+          </Tooltip>
+        </div>
+
+      </div>
     </div>
   );
 }

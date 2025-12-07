@@ -330,23 +330,23 @@ fn copy_raw_image_to_clipboard(image_data: &[u8]) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        use std::io::Write;
-        // macOS: 使用 pbcopy 通过 stdin
-        let mut child = Command::new("osascript")
-            .args(["-e", "set the clipboard to (read (POSIX file \"/dev/stdin\") as TIFF picture)"])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("复制到剪贴板失败: {}", e))?;
+        // macOS: 保存到临时文件后使用 osascript 复制
+        let temp_path = std::env::temp_dir().join("markpix_clipboard.png");
+        std::fs::write(&temp_path, image_data)
+            .map_err(|e| format!("保存临时文件失败: {}", e))?;
         
-        if let Some(stdin) = child.stdin.as_mut() {
-            stdin.write_all(image_data).ok();
-        }
-        child.wait().ok();
+        let script = format!(
+            "set the clipboard to (read (POSIX file \"{}\") as «class PNGf»)",
+            temp_path.display()
+        );
+        Command::new("osascript")
+            .args(["-e", &script])
+            .output()
+            .map_err(|e| format!("复制到剪贴板失败: {}", e))?;
     }
     #[cfg(target_os = "windows")]
     {
         // Windows: 需要保存到临时文件
-        use std::io::Write;
         let temp_path = std::env::temp_dir().join("markpix_clipboard.png");
         std::fs::write(&temp_path, image_data)
             .map_err(|e| format!("保存临时文件失败: {}", e))?;

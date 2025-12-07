@@ -1,6 +1,6 @@
 # MarkPix
 
-一个现代化的跨平台图片标注工具，基于 Tauri + React + TypeScript 构建。
+一个现代化的wayland平台的片标注工具，基于 Tauri + React + TypeScript 构建。
 
 ![MarkPix](./.assert/image.png)
 
