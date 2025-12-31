@@ -15,7 +15,8 @@ export type ToolType =
   | "marker" // 序号标记
   | "blur" // 马赛克/模糊
   | "crop" // 裁剪
-  | "image"; // 图片贴图
+  | "image" // 图片贴图
+  | "magnifier"; // 放大镜
 
 /**
  * 线条样式
@@ -182,6 +183,21 @@ export interface ImageAnnotation extends BaseAnnotation {
 }
 
 /**
+ * 放大镜标注
+ */
+export interface MagnifierAnnotation extends BaseAnnotation {
+  type: "magnifier";
+  // 源区域（小圆）- 要放大的区域
+  sourceX: number;
+  sourceY: number;
+  sourceRadius: number;
+  // 显示区域（大圆）- x, y 来自 BaseAnnotation
+  targetRadius: number;
+  // 放大倍率 = targetRadius / sourceRadius（可手动调节，会同步更新 targetRadius）
+  scale: number;
+}
+
+/**
  * 所有标注类型联合
  */
 export type Annotation =
@@ -193,7 +209,8 @@ export type Annotation =
   | BrushAnnotation
   | MarkerAnnotation
   | BlurAnnotation
-  | ImageAnnotation;
+  | ImageAnnotation
+  | MagnifierAnnotation;
 
 /**
  * 工具配置
@@ -232,6 +249,9 @@ export interface ToolConfig {
 
   // 箭头
   arrowStyle: ArrowStyle;
+
+  // 放大镜
+  magnifierScale: number; // 放大倍率
 }
 
 /**

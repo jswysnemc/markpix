@@ -41,6 +41,7 @@ const defaultToolConfig: ToolConfig = {
   blurCornerRadius: 10, // 马赛克圆角，默认为10
   cornerRadius: 0, // 矩形圆角，默认为0
   arrowStyle: "filled", // 默认实心箭头
+  magnifierScale: 2, // 放大镜倍率，默认2倍
 };
 
 /**
@@ -85,6 +86,14 @@ interface EditorState {
   redo: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
+
+  // 复制到剪贴板时的历史索引（用于判断关闭时是否需要确认保存）
+  lastCopiedHistoryIndex: number | null;
+  setLastCopiedHistoryIndex: (index: number | null) => void;
+  // 复制时的状态快照（用于精确比较）
+  lastCopiedSnapshot: string | null;
+  setLastCopiedSnapshot: () => void;
+  hasChangedSinceCopy: () => boolean;
 
   // 视图状态
   viewState: ViewState;
@@ -253,6 +262,25 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   canUndo: () => get().historyIndex >= 0,
   canRedo: () => get().historyIndex < get().history.length - 1,
+
+  // 复制到剪贴板时的历史索引
+  lastCopiedHistoryIndex: null,
+  setLastCopiedHistoryIndex: (index) => set({ lastCopiedHistoryIndex: index }),
+  // 复制时的状态快照
+  lastCopiedSnapshot: null,
+  setLastCopiedSnapshot: () => {
+    const { annotations, cropMask } = get();
+    const snapshot = JSON.stringify({ annotations, cropMask });
+    set({ lastCopiedSnapshot: snapshot });
+  },
+  hasChangedSinceCopy: () => {
+    const { lastCopiedSnapshot, annotations, cropMask } = get();
+    // 如果从未复制过，则认为有改动
+    if (lastCopiedSnapshot === null) return true;
+    // 比较当前状态与复制时的快照
+    const currentSnapshot = JSON.stringify({ annotations, cropMask });
+    return currentSnapshot !== lastCopiedSnapshot;
+  },
 
   // 视图状态
   viewState: {
@@ -505,6 +533,24 @@ export function createAnnotation(
         cornerRadius: config.blurCornerRadius,
       };
       return extra ? { ...blur, ...extra } as Annotation : blur;
+    }
+    case "magnifier": {
+      const sourceRadius = 40; // 小圆（源区域）默认半径
+      const targetRadius = sourceRadius * config.magnifierScale; // 大圆半径 = 小圆半径 * 放大倍率
+      const magnifier: Annotation = {
+        ...baseProps,
+        type: "magnifier" as const,
+        // 源区域（小圆）- 点击位置即为小圆位置
+        sourceX: position.x,
+        sourceY: position.y,
+        sourceRadius: sourceRadius,
+        // 显示区域（大圆）- 位置在小圆右下方偏移处
+        x: position.x + 120,
+        y: position.y + 80,
+        targetRadius: targetRadius,
+        scale: config.magnifierScale,
+      };
+      return extra ? { ...magnifier, ...extra } as Annotation : magnifier;
     }
     default:
       throw new Error(`未知的标注类型: ${type}`);

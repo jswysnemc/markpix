@@ -24,12 +24,15 @@ const MAX_WINDOW_HEIGHT = 1080;
 export function Editor() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mousePositionRef = useRef<{ x: number; y: number } | null>(null);
+  const loadDroppedImageRef = useRef<((path: string) => Promise<void>) | null>(null);
+  const lastDropTimeRef = useRef<number>(0); // 防重复拖放
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [showSettings, setShowSettings] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showOpenConfirm, setShowOpenConfirm] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [cliOutputPattern, setCliOutputPattern] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const {
     image,
@@ -49,6 +52,8 @@ export function Editor() {
     annotations,
     outputPattern,
     viewState,
+    setLastCopiedSnapshot,
+    hasChangedSinceCopy,
   } = useEditorStore();
 
   // 监听容器大小变化
@@ -443,6 +448,8 @@ export function Editor() {
       // 提取 base64 数据并直接复制
       const base64Data = dataUrl.split(",")[1];
       await invoke("copy_image_data_to_clipboard", { data: base64Data });
+      // 记录复制时的状态快照
+      setLastCopiedSnapshot();
       showToast("已复制到剪贴板");
     } catch (error) {
       console.error("复制失败:", error);
@@ -452,14 +459,14 @@ export function Editor() {
 
   // 关闭窗口处理
   const handleClose = useCallback(async () => {
-    // 如果有图片，无论是否编辑过，都显示确认对话框
-    // 用户需求：当加载图片但是未编辑任何内容时退出 也走先问是否保存逻辑
-    if (image) {
+    // 如果有图片且复制后有改动，显示确认对话框
+    if (image && hasChangedSinceCopy()) {
       setShowCloseConfirm(true);
     } else {
+      // 没有图片或复制后无改动，直接关闭
       await invoke("exit_app");
     }
-  }, [image]);
+  }, [image, hasChangedSinceCopy]);
 
   // 确认关闭（不保存）
   const handleConfirmClose = useCallback(async () => {
@@ -556,13 +563,146 @@ export function Editor() {
     }
   }, [image, setImage, adjustWindowSize]);
 
+  const isSupportedImageFile = useCallback((nameOrPath: string) => {
+    return /\.(png|jpe?g|gif|webp|bmp)$/i.test(nameOrPath);
+  }, []);
+
+  const applyDroppedImage = useCallback(async (
+    dataUrl: string,
+    width: number,
+    height: number,
+    name: string,
+    path?: string
+  ) => {
+    // 使用 getState() 获取最新的 image 状态，避免闭包陷阱
+    const currentImage = useEditorStore.getState().image;
+
+    if (currentImage) {
+      const pos = getImageInsertPosition(width, height);
+      const { addAnnotation, pushHistory, setSelectedIds } = useEditorStore.getState();
+      const imageAnnotation = {
+        id: `image-${Date.now()}`,
+        type: "image" as const,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        src: dataUrl,
+      };
+      addAnnotation(imageAnnotation);
+      pushHistory();
+      // 自动选中新插入的图片，方便用户立即调整位置
+      setSelectedIds([imageAnnotation.id]);
+      showToast("图片已添加为贴图");
+    } else {
+      const imageInfo: ImageInfo = {
+        src: dataUrl,
+        width,
+        height,
+        name,
+        path,
+      };
+      setImage(imageInfo);
+      await adjustWindowSize(width, height);
+      showToast("背景图片已加载");
+    }
+  }, [setImage, adjustWindowSize, getImageInsertPosition, showToast]);
+
+  const loadDroppedImageFromPath = useCallback(async (path: string) => {
+    if (!isSupportedImageFile(path)) {
+      showToast("请拖入图片文件", "error");
+      return;
+    }
+
+    try {
+      const dataUrl = await invoke<string>("read_image_file", { path });
+      const img = new Image();
+      img.onload = () => {
+        const fileName = path.split(/[\\/]/).pop() || "image";
+        void applyDroppedImage(dataUrl, img.width, img.height, fileName, path);
+      };
+      img.onerror = () => {
+        showToast("加载图片失败", "error");
+      };
+      img.src = dataUrl;
+    } catch (error) {
+      console.error("读取拖入图片失败:", error);
+      showToast("加载图片失败", "error");
+    }
+  }, [applyDroppedImage, isSupportedImageFile, showToast]);
+
+  // 更新 ref 以便在事件监听器中使用最新的函数
+  loadDroppedImageRef.current = loadDroppedImageFromPath;
+
+  // Tauri 拖拽事件处理 - 使用空依赖数组，只注册一次
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    const isSupportedImage = (nameOrPath: string) => {
+      return /\.(png|jpe?g|gif|webp|bmp)$/i.test(nameOrPath);
+    };
+
+    const setupDragDropListener = async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        unlisten = await appWindow.onDragDropEvent((event) => {
+          const payload = event.payload;
+          if (payload.type === "enter" || payload.type === "over") {
+            setIsDragging(true);
+            return;
+          }
+          if (payload.type === "leave") {
+            setIsDragging(false);
+            return;
+          }
+          if (payload.type === "drop") {
+            setIsDragging(false);
+
+            // 使用时间戳防止重复处理（1秒内的重复事件会被忽略）
+            const now = Date.now();
+            if (now - lastDropTimeRef.current < 1000) {
+              return;
+            }
+            lastDropTimeRef.current = now;
+
+            const paths = payload.paths;
+            if (!paths || paths.length === 0) {
+              return;
+            }
+
+            const imagePath = paths.find(isSupportedImage);
+            if (!imagePath) {
+              return;
+            }
+
+            // 使用 ref 获取最新的函数
+            const loadFn = loadDroppedImageRef.current;
+            if (loadFn) {
+              loadFn(imagePath);
+            }
+          }
+        });
+      } catch (error) {
+        console.error("监听拖拽事件失败:", error);
+      }
+    };
+
+    setupDragDropListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []); // 空依赖数组，只注册一次
+
   // 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // 检查是否在输入框中（textarea, input 等）
       const target = e.target as HTMLElement;
-      const isInInput = target.tagName === "INPUT" || 
-                        target.tagName === "TEXTAREA" || 
+      const isInInput = target.tagName === "INPUT" ||
+                        target.tagName === "TEXTAREA" ||
                         target.isContentEditable;
 
       // Ctrl+V 粘贴（在输入框外才触发自定义粘贴）
@@ -592,9 +732,14 @@ export function Editor() {
         return;
       }
 
-      // Ctrl+Shift+C 或 F12 打开开发者工具（开发模式下）
-      if ((e.ctrlKey && e.shiftKey && e.key === "C") || e.key === "F12") {
-        // 不阻止默认行为，允许浏览器/Tauri 处理开发者工具
+      // F12 打开开发者工具
+      if (e.key === "F12") {
+        e.preventDefault();
+
+        // 调用 Rust 后端命令打开开发者工具
+        import("@tauri-apps/api/core").then(({ invoke }) => {
+          invoke("open_devtools").catch(console.error);
+        });
         return;
       }
 
@@ -627,6 +772,7 @@ export function Editor() {
         m: "marker",
         u: "blur",
         c: "crop",
+        z: "magnifier",
       };
 
       if (!e.ctrlKey && !e.altKey && toolKeys[e.key.toLowerCase()]) {
@@ -665,6 +811,15 @@ export function Editor() {
       
       {/* 画布区域 - 顶部留出工具栏空间 */}
       <div ref={containerRef} className="relative flex-1 overflow-hidden mt-10">
+        {/* 拖拽提示遮罩 */}
+        {isDragging && (
+          <div className="absolute inset-0 z-50 bg-blue-500/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+            <div className="text-2xl font-semibold text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 px-8 py-4 rounded-xl shadow-2xl border-2 border-blue-500 border-dashed">
+              拖入图片
+            </div>
+          </div>
+        )}
+
         {containerSize.width > 0 && containerSize.height > 0 && (
           <AnnotationCanvas
             containerWidth={containerSize.width}

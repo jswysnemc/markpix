@@ -1,6 +1,6 @@
 [package]
 name = "markpix"
-version = "0.4.0"
+version = "0.5.0"
 description = "一个现代化的图片标注工具"
 authors = ["snemc"]
 edition = "2021"
@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

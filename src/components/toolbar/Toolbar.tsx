@@ -30,6 +30,7 @@ import {
   ZoomIn,
   ZoomOut,
   Terminal,
+  Search,
 } from "lucide-react";
 import type { ToolType } from "@/types";
 
@@ -47,6 +48,7 @@ const tools: { type: ToolType; icon: React.ReactNode; label: string }[] = [
   { type: "blur", icon: <Grid3X3 size={18} />, label: "马赛克 (U)" },
   { type: "crop", icon: <Crop size={18} />, label: "裁剪 (C)" },
   { type: "image", icon: <ImagePlus size={18} />, label: "插入图片 (I)" },
+  { type: "magnifier", icon: <Search size={18} />, label: "放大镜 (Z)" },
 ];
 
 interface ToolbarProps {

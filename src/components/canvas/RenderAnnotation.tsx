@@ -1,5 +1,5 @@
 // 标注渲染组件 - 根据类型渲染不同的 Konva 元素
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import {
   Rect,
   Ellipse,
@@ -21,13 +21,16 @@ interface RenderAnnotationProps {
   onSelect: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
   onTransformEnd: (node: Konva.Node) => void;
   scale?: number; // 当前缩放比例，用于补偿线宽等
+  onLiveChange?: () => void;
 }
 
 export function RenderAnnotation({
   annotation,
+  isSelected,
   onSelect,
   onTransformEnd,
   scale = 1,
+  onLiveChange,
 }: RenderAnnotationProps) {
   const nodeRef = useRef<Konva.Node | null>(null);
   const { updateAnnotation, setEditingTextId, currentTool } = useEditorStore();
@@ -311,6 +314,18 @@ export function RenderAnnotation({
           annotation={annotation}
           commonProps={commonProps}
           nodeRef={nodeRef}
+        />
+      );
+
+    case "magnifier":
+      return (
+        <MagnifierAnnotationRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+          scale={scale}
+          isSelected={isSelected}
+          onLiveChange={onLiveChange}
         />
       );
 
@@ -1028,5 +1043,674 @@ function ImageAnnotationRenderer({
       width={annotation.width}
       height={annotation.height}
     />
+  );
+}
+
+// 放大镜渲染器
+interface MagnifierAnnotationRendererProps {
+  annotation: Extract<Annotation, { type: "magnifier" }>;
+  commonProps: Record<string, unknown>;
+  nodeRef: React.RefObject<Konva.Node | null>;
+  scale?: number;
+  isSelected?: boolean;
+  onLiveChange?: () => void;
+}
+
+function MagnifierAnnotationRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+  scale = 1,
+  isSelected = false,
+  onLiveChange,
+}: MagnifierAnnotationRendererProps) {
+  const { image: bgImage, updateAnnotation, currentTool } = useEditorStore();
+  const [magnifiedImage, setMagnifiedImage] = useState<HTMLImageElement | null>(null);
+  const groupRef = useRef<Konva.Group | null>(null);
+  const sourceCircleRef = useRef<Konva.Circle | null>(null);
+  const targetHandleRef = useRef<Konva.Circle | null>(null);
+  const sourceHandleRef = useRef<Konva.Circle | null>(null);
+  const line1Ref = useRef<Konva.Line | null>(null);
+  const line2Ref = useRef<Konva.Line | null>(null);
+  const magnifiedImageRef = useRef<Konva.Image | null>(null);
+  const bgImageRef = useRef<HTMLImageElement | null>(null);
+  const isDraggingSourceRef = useRef(false); // 标记是否正在拖动小圆
+  const isDraggingGroupRef = useRef(false); // 标记是否正在拖动大圆/组
+  const isDraggingAnyRef = useRef(false); // 标记是否正在进行任何拖动操作
+  const isSelectTool = currentTool === "select";
+
+  // 缩放控制点的大小（视觉上固定大小）
+  const handleSize = 8 / scale;
+
+  // 预加载背景图片
+  useEffect(() => {
+    if (!bgImage) return;
+    const img = new window.Image();
+    img.src = bgImage.src;
+    img.onload = () => {
+      bgImageRef.current = img;
+    };
+  }, [bgImage?.src]);
+
+  // 绘制放大效果的函数
+  const renderMagnifiedImage = useCallback((
+    sourceX: number,
+    sourceY: number,
+    sourceRadius: number,
+    targetRadius: number
+  ) => {
+    if (!bgImageRef.current) return;
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // 设置画布大小（大圆的尺寸）
+    canvas.width = targetRadius * 2;
+    canvas.height = targetRadius * 2;
+
+    // 清空画布
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 创建圆形裁剪路径
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(targetRadius, targetRadius, targetRadius, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+
+    // 绘制放大的图片（从源区域取样，放大到目标区域）
+    const sourceSize = sourceRadius * 2;
+    const sx = sourceX - sourceRadius;
+    const sy = sourceY - sourceRadius;
+
+    ctx.drawImage(
+      bgImageRef.current,
+      sx,
+      sy,
+      sourceSize,
+      sourceSize,
+      0,
+      0,
+      targetRadius * 2,
+      targetRadius * 2
+    );
+
+    ctx.restore();
+
+    // 绘制边框
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(targetRadius, targetRadius, targetRadius - 1.5, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 转换为图片
+    const resultImg = new window.Image();
+    resultImg.src = canvas.toDataURL();
+    resultImg.onload = () => {
+      setMagnifiedImage(resultImg);
+    };
+  }, []);
+
+  // 初始绘制放大效果
+  useEffect(() => {
+    if (!bgImage) return;
+
+    const img = new window.Image();
+    img.src = bgImage.src;
+    img.onload = () => {
+      bgImageRef.current = img;
+      renderMagnifiedImage(
+        annotation.sourceX,
+        annotation.sourceY,
+        annotation.sourceRadius,
+        annotation.targetRadius
+      );
+    };
+  }, [bgImage, annotation.sourceX, annotation.sourceY, annotation.sourceRadius, annotation.targetRadius, renderMagnifiedImage]);
+
+  // 所有尺寸都在图片坐标系中
+  const targetRadius = annotation.targetRadius;
+  const sourceRadius = annotation.sourceRadius;
+  const sourceRadiusRef = useRef(sourceRadius);
+  const targetRadiusRef = useRef(targetRadius);
+
+  useEffect(() => {
+    sourceRadiusRef.current = sourceRadius;
+    targetRadiusRef.current = targetRadius;
+  }, [sourceRadius, targetRadius]);
+
+  // 小圆相对于大圆的位置（图片坐标系）
+  const sourceRelativeX = annotation.sourceX - annotation.x;
+  const sourceRelativeY = annotation.sourceY - annotation.y;
+
+  // 计算两圆之间的外切线点
+  // 大圆中心在 (0, 0)，小圆中心在 (sourceRelativeX, sourceRelativeY)
+  const calculateTangentLines = useCallback((
+    srcRelX: number,
+    srcRelY: number,
+    srcRadius: number,
+    tgtRadius: number
+  ): { line1: number[]; line2: number[] } => {
+    // 两圆心之间的距离
+    const dx = srcRelX;
+    const dy = srcRelY;
+    const d = Math.sqrt(dx * dx + dy * dy);
+
+    // 如果两圆重叠或距离太近，返回简单连线
+    if (d <= Math.abs(tgtRadius - srcRadius) + 1) {
+      return {
+        line1: [0, 0, srcRelX, srcRelY],
+        line2: [0, 0, srcRelX, srcRelY]
+      };
+    }
+
+    // 计算外切线
+    // 外切线的角度：alpha = asin((R - r) / d)，这里R是大圆半径，r是小圆半径
+    // 两圆心连线的角度
+    const angle = Math.atan2(dy, dx);
+
+    // 外切线与圆心连线的夹角
+    const alpha = Math.asin((tgtRadius - srcRadius) / d);
+
+    // 切线1的角度（上方）
+    const angle1 = angle + Math.PI / 2 - alpha;
+    // 切线2的角度（下方）
+    const angle2 = angle - Math.PI / 2 + alpha;
+
+    // 大圆上的切点
+    const p1x = tgtRadius * Math.cos(angle1);
+    const p1y = tgtRadius * Math.sin(angle1);
+    const p2x = tgtRadius * Math.cos(angle2);
+    const p2y = tgtRadius * Math.sin(angle2);
+
+    // 小圆上的切点
+    const q1x = srcRelX + srcRadius * Math.cos(angle1);
+    const q1y = srcRelY + srcRadius * Math.sin(angle1);
+    const q2x = srcRelX + srcRadius * Math.cos(angle2);
+    const q2y = srcRelY + srcRadius * Math.sin(angle2);
+
+    return {
+      line1: [p1x, p1y, q1x, q1y],
+      line2: [p2x, p2y, q2x, q2y]
+    };
+  }, []);
+
+  // 获取当前切线点（用于初始渲染）
+  const tangentLines = calculateTangentLines(sourceRelativeX, sourceRelativeY, sourceRadius, targetRadius);
+
+  // 当不在拖动时，同步切线点到 React 计算的值
+  useEffect(() => {
+    // 只有在没有任何拖动操作时才同步
+    if (!isDraggingAnyRef.current) {
+      if (line1Ref.current) {
+        line1Ref.current.points(tangentLines.line1);
+      }
+      if (line2Ref.current) {
+        line2Ref.current.points(tangentLines.line2);
+      }
+    }
+  }, [tangentLines.line1, tangentLines.line2]);
+
+  // 实时更新放大图片（节流）
+  const updateMagnifiedImageThrottled = useRef<number | null>(null);
+  const updateMagnifiedImageRealtime = useCallback((newSourceX: number, newSourceY: number) => {
+    if (updateMagnifiedImageThrottled.current) {
+      cancelAnimationFrame(updateMagnifiedImageThrottled.current);
+    }
+    updateMagnifiedImageThrottled.current = requestAnimationFrame(() => {
+      renderMagnifiedImage(newSourceX, newSourceY, annotation.sourceRadius, annotation.targetRadius);
+    });
+  }, [annotation.sourceRadius, annotation.targetRadius, renderMagnifiedImage]);
+
+  // 处理大圆（组）拖拽开始
+  const handleGroupDragStart = () => {
+    isDraggingGroupRef.current = true;
+    isDraggingAnyRef.current = true;
+  };
+
+  // 处理大圆（组）拖拽 - 只移动大圆，小圆保持绝对位置不变
+  const handleGroupDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
+    // 获取新的大圆位置
+    const newX = e.target.x();
+    const newY = e.target.y();
+    const currentSourceRadius = sourceRadiusRef.current;
+    const currentTargetRadius = targetRadiusRef.current;
+
+    // 小圆保持绝对位置不变，所以相对位置需要反向调整
+    const newSourceRelX = annotation.sourceX - newX;
+    const newSourceRelY = annotation.sourceY - newY;
+
+    // 更新小圆的相对位置
+    if (sourceCircleRef.current) {
+      sourceCircleRef.current.x(newSourceRelX);
+      sourceCircleRef.current.y(newSourceRelY);
+    }
+
+    // 更新小圆的缩放控制点位置
+    if (sourceHandleRef.current) {
+      sourceHandleRef.current.x(newSourceRelX + currentSourceRadius * Math.cos(Math.PI / 4));
+      sourceHandleRef.current.y(newSourceRelY + currentSourceRadius * Math.sin(Math.PI / 4));
+    }
+
+    // 更新切线
+    const lines = calculateTangentLines(newSourceRelX, newSourceRelY, currentSourceRadius, currentTargetRadius);
+    if (line1Ref.current) {
+      line1Ref.current.points(lines.line1);
+    }
+    if (line2Ref.current) {
+      line2Ref.current.points(lines.line2);
+    }
+  };
+
+  const handleGroupDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
+    isDraggingGroupRef.current = false;
+    isDraggingAnyRef.current = false;
+
+    const newX = e.target.x();
+    const newY = e.target.y();
+
+    updateAnnotation(annotation.id, {
+      x: newX,
+      y: newY,
+    });
+  };
+
+  // 处理小圆位置拖拽开始
+  const handleSourceDragStart = () => {
+    isDraggingSourceRef.current = true;
+    isDraggingAnyRef.current = true;
+  };
+
+  // 处理小圆位置拖拽
+  const handleSourceDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
+    e.cancelBubble = true;
+
+    const newRelX = e.target.x();
+    const newRelY = e.target.y();
+    const currentSourceRadius = sourceRadiusRef.current;
+    const currentTargetRadius = targetRadiusRef.current;
+
+    // 直接更新切线 - 使用当前的半径值
+    const lines = calculateTangentLines(newRelX, newRelY, currentSourceRadius, currentTargetRadius);
+    if (line1Ref.current) {
+      line1Ref.current.points(lines.line1);
+    }
+    if (line2Ref.current) {
+      line2Ref.current.points(lines.line2);
+    }
+
+    // 更新小圆的缩放控制点位置
+    if (sourceHandleRef.current) {
+      sourceHandleRef.current.x(newRelX + currentSourceRadius * Math.cos(Math.PI / 4));
+      sourceHandleRef.current.y(newRelY + currentSourceRadius * Math.sin(Math.PI / 4));
+    }
+
+    // 实时更新放大图片
+    const groupX = groupRef.current?.x() ?? annotation.x;
+    const groupY = groupRef.current?.y() ?? annotation.y;
+    const newSourceX = groupX + newRelX;
+    const newSourceY = groupY + newRelY;
+    updateMagnifiedImageRealtime(newSourceX, newSourceY);
+  };
+
+  const handleSourceDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
+    e.cancelBubble = true;
+    isDraggingSourceRef.current = false;
+    isDraggingAnyRef.current = false;
+
+    const newRelX = e.target.x();
+    const newRelY = e.target.y();
+    const groupX = groupRef.current?.x() ?? annotation.x;
+    const groupY = groupRef.current?.y() ?? annotation.y;
+    const newSourceX = groupX + newRelX;
+    const newSourceY = groupY + newRelY;
+
+    updateAnnotation(annotation.id, {
+      sourceX: newSourceX,
+      sourceY: newSourceY,
+    });
+  };
+
+  // 处理大圆缩放控制点拖拽 - 实时更新
+  const handleTargetResizeDrag = (e: Konva.KonvaEventObject<DragEvent>) => {
+    if (!isSelectTool) return;
+    e.cancelBubble = true;
+
+    const handleX = e.target.x();
+    const handleY = e.target.y();
+    const distance = Math.sqrt(handleX * handleX + handleY * handleY);
+    const newTargetRadius = Math.max(20, distance);
+    targetRadiusRef.current = newTargetRadius;
+
+    // 实时更新大圆图片的尺寸
+    if (magnifiedImageRef.current) {
+      magnifiedImageRef.current.x(-newTargetRadius);
+      magnifiedImageRef.current.y(-newTargetRadius);
+      magnifiedImageRef.current.width(newTargetRadius * 2);
+      magnifiedImageRef.current.height(newTargetRadius * 2);
+    }
+
+    // 实时更新切线
+    const currentSourceRelX = sourceCircleRef.current?.x() ?? sourceRelativeX;
+    const currentSourceRelY = sourceCircleRef.current?.y() ?? sourceRelativeY;
+    const currentSourceRadius = sourceRadiusRef.current;
+    const lines = calculateTangentLines(
+      currentSourceRelX,
+      currentSourceRelY,
+      currentSourceRadius,
+      newTargetRadius
+    );
+    if (line1Ref.current) {
+      line1Ref.current.points(lines.line1);
+    }
+    if (line2Ref.current) {
+      line2Ref.current.points(lines.line2);
+    }
+  };
+
+  const handleTargetResizeEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
+    if (!isSelectTool) return;
+    e.cancelBubble = true;
+
+    const handleX = e.target.x();
+    const handleY = e.target.y();
+    const distance = Math.sqrt(handleX * handleX + handleY * handleY);
+    const newTargetRadius = Math.max(20, distance);
+    const newScale = newTargetRadius / annotation.sourceRadius;
+
+    updateAnnotation(annotation.id, {
+      targetRadius: newTargetRadius,
+      scale: Math.max(1, Math.min(10, newScale)),
+    });
+  };
+
+  // 处理小圆缩放控制点拖拽 - 实时更新
+  const handleSourceResizeDrag = (e: Konva.KonvaEventObject<DragEvent>) => {
+    if (!isSelectTool) return;
+    e.cancelBubble = true;
+
+    const currentSourceRelX = sourceCircleRef.current?.x() ?? sourceRelativeX;
+    const currentSourceRelY = sourceCircleRef.current?.y() ?? sourceRelativeY;
+    const handleX = e.target.x() - currentSourceRelX;
+    const handleY = e.target.y() - currentSourceRelY;
+    const distance = Math.sqrt(handleX * handleX + handleY * handleY);
+    const newSourceRadius = Math.max(10, distance);
+    sourceRadiusRef.current = newSourceRadius;
+
+    // 实时更新小圆尺寸
+    if (sourceCircleRef.current) {
+      sourceCircleRef.current.radius(newSourceRadius);
+    }
+
+    // 实时更新切线
+    const currentTargetRadius = targetRadiusRef.current;
+    const lines = calculateTangentLines(
+      currentSourceRelX,
+      currentSourceRelY,
+      newSourceRadius,
+      currentTargetRadius
+    );
+    if (line1Ref.current) {
+      line1Ref.current.points(lines.line1);
+    }
+    if (line2Ref.current) {
+      line2Ref.current.points(lines.line2);
+    }
+  };
+
+  const handleSourceResizeEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
+    if (!isSelectTool) return;
+    e.cancelBubble = true;
+
+    const currentSourceRelX = sourceCircleRef.current?.x() ?? sourceRelativeX;
+    const currentSourceRelY = sourceCircleRef.current?.y() ?? sourceRelativeY;
+    const handleX = e.target.x() - currentSourceRelX;
+    const handleY = e.target.y() - currentSourceRelY;
+    const distance = Math.sqrt(handleX * handleX + handleY * handleY);
+    const newSourceRadius = Math.max(10, distance);
+    const newScale = annotation.targetRadius / newSourceRadius;
+
+    updateAnnotation(annotation.id, {
+      sourceRadius: newSourceRadius,
+      scale: Math.max(1, Math.min(10, newScale)),
+    });
+  };
+
+  // 设置光标样式
+  const setResizeCursor = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (isSelectTool) {
+      const container = e.target.getStage()?.container();
+      if (container) container.style.cursor = "nwse-resize";
+    }
+  };
+
+  const setMoveCursor = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (isSelectTool) {
+      const container = e.target.getStage()?.container();
+      if (container) container.style.cursor = "move";
+    }
+  };
+
+  const resetCursor = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    const container = e.target.getStage()?.container();
+    if (container) container.style.cursor = "default";
+  };
+
+  // 使用 useEffect 监听组位置变化，确保切线始终同步
+  // 这个循环始终运行，以确保在 Transformer 拖动时也能更新
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    let animationId: number | null = null;
+    let lastGroupX = group.x();
+    let lastGroupY = group.y();
+    let lastSourceX = sourceCircleRef.current?.x() ?? sourceRelativeX;
+    let lastSourceY = sourceCircleRef.current?.y() ?? sourceRelativeY;
+    let lastSourceRadius = sourceRadiusRef.current;
+    let lastTargetRadius = targetRadiusRef.current;
+
+    const updateLoop = () => {
+      if (!groupRef.current) return;
+
+      const currentGroupX = groupRef.current.x();
+      const currentGroupY = groupRef.current.y();
+      const currentSourceX = sourceCircleRef.current?.x() ?? sourceRelativeX;
+      const currentSourceY = sourceCircleRef.current?.y() ?? sourceRelativeY;
+      const currentSourceRadius = sourceRadiusRef.current;
+      const currentTargetRadius = targetRadiusRef.current;
+
+      // 检测是否有任何变化（组位置或小圆相对位置）
+      const groupChanged = currentGroupX !== lastGroupX || currentGroupY !== lastGroupY;
+      const sourceChanged = currentSourceX !== lastSourceX || currentSourceY !== lastSourceY;
+      const radiusChanged = currentSourceRadius !== lastSourceRadius || currentTargetRadius !== lastTargetRadius;
+
+      if (groupChanged || sourceChanged || radiusChanged) {
+        let newSourceRelX: number;
+        let newSourceRelY: number;
+
+        if (isDraggingSourceRef.current) {
+          // 正在拖动小圆：使用小圆的当前位置
+          newSourceRelX = currentSourceX;
+          newSourceRelY = currentSourceY;
+        } else if (groupChanged) {
+          // 组被移动（通过 Transformer 或直接拖动大圆）
+          // 小圆保持绝对位置，计算新的相对位置
+          newSourceRelX = annotation.sourceX - currentGroupX;
+          newSourceRelY = annotation.sourceY - currentGroupY;
+
+          // 更新小圆位置
+          if (sourceCircleRef.current) {
+            sourceCircleRef.current.x(newSourceRelX);
+            sourceCircleRef.current.y(newSourceRelY);
+          }
+
+          // 更新控制点
+          if (sourceHandleRef.current) {
+            sourceHandleRef.current.x(newSourceRelX + currentSourceRadius * Math.cos(Math.PI / 4));
+            sourceHandleRef.current.y(newSourceRelY + currentSourceRadius * Math.sin(Math.PI / 4));
+          }
+        } else {
+          // 只有小圆相对位置变化
+          newSourceRelX = currentSourceX;
+          newSourceRelY = currentSourceY;
+        }
+
+        // 更新切线
+        if (line1Ref.current && line2Ref.current) {
+          const lines = calculateTangentLines(
+            newSourceRelX,
+            newSourceRelY,
+            currentSourceRadius,
+            currentTargetRadius
+          );
+          line1Ref.current.points(lines.line1);
+          line2Ref.current.points(lines.line2);
+        }
+
+        lastGroupX = currentGroupX;
+        lastGroupY = currentGroupY;
+        lastSourceX = currentSourceX;
+        lastSourceY = currentSourceY;
+        lastSourceRadius = currentSourceRadius;
+        lastTargetRadius = currentTargetRadius;
+
+        if (onLiveChange && isSelected && isSelectTool) {
+          onLiveChange();
+        }
+      }
+
+      animationId = requestAnimationFrame(updateLoop);
+    };
+
+    // 始终启动更新循环
+    animationId = requestAnimationFrame(updateLoop);
+
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+    };
+  }, [
+    annotation.sourceX,
+    annotation.sourceY,
+    sourceRadius,
+    targetRadius,
+    sourceRelativeX,
+    sourceRelativeY,
+    calculateTangentLines,
+    isSelected,
+    isSelectTool,
+    onLiveChange,
+  ]);
+
+  // 修改 commonProps，使用我们的处理函数
+  const modifiedCommonProps = {
+    ...commonProps,
+    onDragStart: handleGroupDragStart,
+    onDragMove: handleGroupDragMove,
+    onDragEnd: handleGroupDragEnd,
+  };
+
+  return (
+    <Group
+      ref={(node) => {
+        groupRef.current = node;
+        if (nodeRef) {
+          (nodeRef as React.MutableRefObject<Konva.Node | null>).current = node;
+        }
+      }}
+      {...modifiedCommonProps}
+    >
+      {/* 大圆 - 放大效果显示区域 */}
+      {magnifiedImage ? (
+        <KonvaImage
+          ref={magnifiedImageRef}
+          image={magnifiedImage}
+          x={-targetRadius}
+          y={-targetRadius}
+          width={targetRadius * 2}
+          height={targetRadius * 2}
+        />
+      ) : (
+        <Circle
+          radius={targetRadius}
+          stroke="#3b82f6"
+          strokeWidth={2 / scale}
+          fill="rgba(59, 130, 246, 0.1)"
+        />
+      )}
+
+      {/* 大圆缩放控制点（右下角45度位置） - 仅选中时显示 */}
+      {isSelected && isSelectTool && (
+        <Circle
+          ref={targetHandleRef}
+          x={targetRadius * Math.cos(Math.PI / 4)}
+          y={targetRadius * Math.sin(Math.PI / 4)}
+          radius={handleSize}
+          fill="#ffffff"
+          stroke="#3b82f6"
+          strokeWidth={2 / scale}
+          draggable
+          onDragMove={handleTargetResizeDrag}
+          onDragEnd={handleTargetResizeEnd}
+          onMouseEnter={setResizeCursor}
+          onMouseLeave={resetCursor}
+        />
+      )}
+
+      {/* 切线1 */}
+      <Line
+        ref={line1Ref}
+        stroke="#ef4444"
+        strokeWidth={1.5 / scale}
+        listening={false}
+      />
+
+      {/* 切线2 */}
+      <Line
+        ref={line2Ref}
+        stroke="#ef4444"
+        strokeWidth={1.5 / scale}
+        listening={false}
+      />
+
+      {/* 小圆 - 源区域指示器（可独立拖拽移动位置） */}
+      <Circle
+        ref={sourceCircleRef}
+        x={sourceRelativeX}
+        y={sourceRelativeY}
+        radius={sourceRadius}
+        stroke="#ef4444"
+        strokeWidth={2 / scale}
+        fill="rgba(255, 255, 255, 0.3)"
+        draggable={isSelectTool}
+        onDragStart={handleSourceDragStart}
+        onDragMove={handleSourceDragMove}
+        onDragEnd={handleSourceDragEnd}
+        onMouseEnter={setMoveCursor}
+        onMouseLeave={resetCursor}
+      />
+
+      {/* 小圆缩放控制点（右下角45度位置） - 仅选中时显示 */}
+      {isSelected && isSelectTool && (
+        <Circle
+          ref={sourceHandleRef}
+          x={sourceRelativeX + sourceRadius * Math.cos(Math.PI / 4)}
+          y={sourceRelativeY + sourceRadius * Math.sin(Math.PI / 4)}
+          radius={handleSize}
+          fill="#ffffff"
+          stroke="#3b82f6"
+          strokeWidth={2 / scale}
+          draggable
+          onDragMove={handleSourceResizeDrag}
+          onDragEnd={handleSourceResizeEnd}
+          onMouseEnter={setResizeCursor}
+          onMouseLeave={resetCursor}
+        />
+      )}
+    </Group>
   );
 }

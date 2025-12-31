@@ -403,6 +403,19 @@ fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// 打开开发者工具
+#[tauri::command]
+fn open_devtools(webview: tauri::WebviewWindow) {
+    #[cfg(debug_assertions)]
+    {
+        if webview.is_devtools_open() {
+            webview.close_devtools();
+        } else {
+            webview.open_devtools();
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     run_with_args(None, None, None)
@@ -450,6 +463,7 @@ pub fn run_with_args(
             exit_app,
             save_config,
             get_config,
+            open_devtools,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用时发生错误");

@@ -351,6 +351,25 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
           </>
         );
 
+      case "magnifier":
+        return (
+          <>
+            <ConfigItem label="放大倍率" isHorizontal={isHorizontal}>
+              <Slider
+                value={toolConfig.magnifierScale}
+                onChange={(v) => setToolConfig({ magnifierScale: v })}
+                min={1.5}
+                max={5}
+                step={0.1}
+                className="w-24"
+              />
+            </ConfigItem>
+            <ConfigItem label={`${toolConfig.magnifierScale.toFixed(1)}x`} isHorizontal={isHorizontal}>
+              <span className="text-xs text-gray-400">滚轮调节</span>
+            </ConfigItem>
+          </>
+        );
+
       default:
         return null;
     }

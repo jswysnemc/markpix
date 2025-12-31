@@ -74,6 +74,17 @@ export function AnnotationCanvas({
   // 删除按钮位置（基于选中标注的边界框）
   const [deleteButtonPos, setDeleteButtonPos] = useState<{ x: number; y: number } | null>(null);
   const [deleteButtonHover, setDeleteButtonHover] = useState(false);
+
+  const requestTransformerUpdate = useCallback(() => {
+    const transformer = transformerRef.current;
+    if (transformer) {
+      transformer.forceUpdate();
+      transformer.getLayer()?.batchDraw();
+      return;
+    }
+
+    layerRef.current?.batchDraw();
+  }, []);
   
   // 框选状态
   const [selectionRect, setSelectionRect] = useState<{
@@ -84,6 +95,10 @@ export function AnnotationCanvas({
   } | null>(null);
   const isSelectingRef = useRef(false);
   const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  // 放大镜状态
+  const [magnifierPos, setMagnifierPos] = useState<{ x: number; y: number } | null>(null);
+  const magnifierCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // 计算图片适应容器的缩放和位置
   const getImageFit = useCallback(() => {
@@ -136,7 +151,7 @@ export function AnnotationCanvas({
     // 获取选中的节点
     const selectedNodes = selectedIds
       .map((id) => stage.findOne(`#${id}`))
-      .filter((node): node is Konva.Node => node !== null);
+      .filter((node): node is Konva.Node => Boolean(node));
 
     transformer.nodes(selectedNodes);
     transformer.getLayer()?.batchDraw();
@@ -169,6 +184,104 @@ export function AnnotationCanvas({
       transformer.off("dragmove", updateDeleteButtonPos);
     };
   }, [selectedIds, annotations, viewState]);
+
+  // 绘制放大镜
+  useEffect(() => {
+    if (!magnifierPos || currentTool !== "magnifier" || !magnifierCanvasRef.current || !loadedImage || !image) {
+      return;
+    }
+
+    const canvas = magnifierCanvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const magnifierRadius = 100;
+    const magnifierScale = 2.5;
+
+    // 清空画布
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 计算图片适应参数
+    const scaleX = containerWidth / image.width;
+    const scaleY = containerHeight / image.height;
+    const fitScale = Math.min(scaleX, scaleY, 1);
+    const fitX = (containerWidth - image.width * fitScale) / 2;
+    const fitY = (containerHeight - image.height * fitScale) / 2;
+
+    const totalScale = fitScale * viewState.scale;
+
+    // 鼠标位置转换为图片坐标
+    const imgX = (magnifierPos.x - fitX - viewState.offsetX) / totalScale;
+    const imgY = (magnifierPos.y - fitY - viewState.offsetY) / totalScale;
+
+    // 检查是否在图片范围内
+    if (imgX < 0 || imgX > image.width || imgY < 0 || imgY > image.height) {
+      return;
+    }
+
+    // 保存状态
+    ctx.save();
+
+    // 创建圆形裁剪区域
+    ctx.beginPath();
+    ctx.arc(magnifierRadius, magnifierRadius, magnifierRadius - 3, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+
+    // 计算要绘制的源图片区域
+    const sourceSize = (magnifierRadius * 2) / magnifierScale;
+    const sourceX = imgX - sourceSize / 2;
+    const sourceY = imgY - sourceSize / 2;
+
+    // 绘制放大的图片
+    ctx.drawImage(
+      loadedImage,
+      sourceX,
+      sourceY,
+      sourceSize,
+      sourceSize,
+      0,
+      0,
+      magnifierRadius * 2,
+      magnifierRadius * 2
+    );
+
+    // 恢复状态
+    ctx.restore();
+
+    // 绘制边框
+    ctx.beginPath();
+    ctx.arc(magnifierRadius, magnifierRadius, magnifierRadius - 3, 0, Math.PI * 2);
+    ctx.strokeStyle = "#3b82f6";
+    ctx.lineWidth = 6;
+    ctx.stroke();
+
+    // 绘制外圈阴影
+    ctx.beginPath();
+    ctx.arc(magnifierRadius, magnifierRadius, magnifierRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(0,0,0,0.3)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 绘制十字线
+    ctx.strokeStyle = "#3b82f6";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+
+    // 水平线
+    ctx.beginPath();
+    ctx.moveTo(0, magnifierRadius);
+    ctx.lineTo(magnifierRadius * 2, magnifierRadius);
+    ctx.stroke();
+
+    // 垂直线
+    ctx.beginPath();
+    ctx.moveTo(magnifierRadius, 0);
+    ctx.lineTo(magnifierRadius, magnifierRadius * 2);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+  }, [magnifierPos, currentTool, loadedImage, viewState, image, containerWidth, containerHeight]);
 
   // 处理鼠标按下
   const handleMouseDown = useCallback(
@@ -242,6 +355,18 @@ export function AnnotationCanvas({
         // 创建新标注
         const newAnnotation = createAnnotation(currentTool, toolConfig, pos);
         setDrawingAnnotation(newAnnotation);
+        return;
+      }
+
+      // 放大镜工具 - 点击创建
+      if (currentTool === "magnifier") {
+        const newAnnotation = createAnnotation(currentTool, toolConfig, pos);
+        addAnnotation(newAnnotation);
+        pushHistory();
+        // 自动选中新创建的放大镜
+        setSelectedIds([newAnnotation.id]);
+        // 自动切换到选择工具
+        setCurrentTool("select");
         return;
       }
 
@@ -343,6 +468,18 @@ export function AnnotationCanvas({
 
   // 处理鼠标移动（使用 RAF 节流提升性能）
   const handleMouseMoveInternal = useCallback(() => {
+    // 处理放大镜
+    if (currentTool === "magnifier") {
+      const stage = stageRef.current;
+      if (stage) {
+        const pos = stage.getPointerPosition();
+        if (pos) {
+          setMagnifierPos(pos);
+        }
+      }
+      return;
+    }
+
     // 处理平移（手型工具或鼠标中键）
     if (isPanningRef.current) {
       const stage = stageRef.current;
@@ -389,6 +526,11 @@ export function AnnotationCanvas({
         height: Math.abs(pos.y - startPos.y),
       });
       return;
+    }
+
+    // 清除放大镜位置（切换到其他工具时）
+    if (magnifierPos) {
+      setMagnifierPos(null);
     }
 
     if (!isDrawing || !drawingAnnotation || !startPointRef.current) return;
@@ -682,9 +824,26 @@ export function AnnotationCanvas({
             selectedAnnotations.forEach(ann => {
               if (ann.type === "image") {
                 const ia = ann as { width: number; height: number };
-                updateAnnotation(ann.id, { 
+                updateAnnotation(ann.id, {
                   width: clamp(ia.width * scaleFactor, 20, 2000),
                   height: clamp(ia.height * scaleFactor, 20, 2000)
+                });
+              }
+            });
+            adjusted = true;
+            break;
+          }
+          case "magnifier": {
+            // 调节放大倍率（同步更新 targetRadius）
+            const currentScale = (firstAnn as { scale: number }).scale;
+            const newScale = clamp(currentScale + delta * 0.1, 1.5, 5);
+            setToolConfig({ magnifierScale: newScale });
+            selectedAnnotations.forEach(ann => {
+              if (ann.type === "magnifier") {
+                const ma = ann as { sourceRadius: number };
+                updateAnnotation(ann.id, {
+                  scale: newScale,
+                  targetRadius: ma.sourceRadius * newScale
                 });
               }
             });
@@ -836,6 +995,8 @@ export function AnnotationCanvas({
         return "default";
       case "text":
         return "text";
+      case "magnifier":
+        return "none"; // 放大镜工具隐藏鼠标光标
       default:
         return "crosshair";
     }
@@ -856,20 +1017,24 @@ export function AnnotationCanvas({
     return null;
   }
 
+  // 放大镜参数
+  const magnifierRadius = 100; // 放大镜半径
+
   return (
-    <Stage
-      ref={stageRef}
-      width={containerWidth}
-      height={containerHeight}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
-      onWheel={handleWheel}
-      onContextMenu={handleContextMenu}
-      style={{ cursor: getCursor() }}
-      perfectDrawEnabled={false}
-    >
+    <>
+      <Stage
+        ref={stageRef}
+        width={containerWidth}
+        height={containerHeight}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
+        onContextMenu={handleContextMenu}
+        style={{ cursor: getCursor() }}
+        perfectDrawEnabled={false}
+      >
       <Layer ref={layerRef}>
         {/* 背景图片 */}
         <KonvaImage
@@ -893,8 +1058,16 @@ export function AnnotationCanvas({
           scaleX={imageFit.scale * viewState.scale}
           scaleY={imageFit.scale * viewState.scale}
         >
-          {/* 渲染所有标注 */}
-          {annotations.map((annotation) => (
+          {/* 渲染所有标注 - 排序使马赛克覆盖放大镜 */}
+          {[...annotations].sort((a, b) => {
+            // 放大镜优先级最低（先渲染，在底层）
+            const priority = (type: string) => {
+              if (type === "magnifier") return 0;
+              if (type === "mosaic") return 2;
+              return 1;
+            };
+            return priority(a.type) - priority(b.type);
+          }).map((annotation) => (
             <RenderAnnotation
               key={`${annotation.id}-${JSON.stringify(annotation)}`}
               annotation={annotation}
@@ -904,6 +1077,7 @@ export function AnnotationCanvas({
                 handleTransformEnd(annotation.id, node)
               }
               scale={imageFit.scale * viewState.scale}
+              onLiveChange={requestTransformerUpdate}
             />
           ))}
 
@@ -915,6 +1089,7 @@ export function AnnotationCanvas({
               onSelect={() => {}}
               onTransformEnd={() => {}}
               scale={imageFit.scale * viewState.scale}
+              onLiveChange={requestTransformerUpdate}
             />
           )}
         </Group>
@@ -1115,5 +1290,24 @@ export function AnnotationCanvas({
         )}
       </Layer>
     </Stage>
+
+    {/* 放大镜 canvas 层 */}
+    {magnifierPos && currentTool === "magnifier" && (
+      <canvas
+        ref={magnifierCanvasRef}
+        style={{
+          position: "absolute",
+          left: magnifierPos.x - magnifierRadius,
+          top: magnifierPos.y - magnifierRadius,
+          width: magnifierRadius * 2,
+          height: magnifierRadius * 2,
+          pointerEvents: "none",
+          zIndex: 1000,
+        }}
+        width={magnifierRadius * 2}
+        height={magnifierRadius * 2}
+      />
+    )}
+  </>
   );
 }
