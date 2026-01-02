@@ -93,7 +93,10 @@ export function Toolbar({
 
   return (
     // 1. 最外层容器：仅负责定位和尺寸，没有任何事件逻辑
-    <div className="absolute top-0 left-0 right-0 h-10 z-50 select-none">
+    <div
+      className="absolute top-0 left-0 right-0 h-10 z-50 select-none"
+      data-tauri-drag-region
+    >
       
       {/* 2. 拖拽层 (底层 z-0) - 独立的空 div，专门接收拖拽信号 */}
       <div 
