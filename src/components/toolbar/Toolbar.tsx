@@ -19,6 +19,7 @@ import {
   Grid3X3,
   Crop,
   ImagePlus,
+  FilePlus2,
   Undo2,
   Redo2,
   Trash2,
@@ -56,6 +57,7 @@ const tools: { type: ToolType; icon: React.ReactNode; label: string }[] = [
 
 interface ToolbarProps {
   onOpenFile: () => void;
+  onCreateBlank: () => void;
   onSave: () => void;
   onCopy: () => void;
   onOpenSettings: () => void;
@@ -66,6 +68,7 @@ interface ToolbarProps {
 
 export function Toolbar({
   onOpenFile,
+  onCreateBlank,
   onSave,
   onCopy,
   onOpenSettings,
@@ -112,6 +115,11 @@ export function Toolbar({
         
         {/* 文件操作 - pointer-events-auto 恢复交互 */}
         <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700 pointer-events-auto">
+          <Tooltip content="新建白板" side="bottom" className="left-0 translate-x-0">
+            <Button variant="ghost" size="icon-sm" onClick={onCreateBlank} disabled={!!image}>
+              <FilePlus2 size={16} />
+            </Button>
+          </Tooltip>
           <Tooltip content="打开文件" side="bottom" className="left-0 translate-x-0">
             <Button variant="ghost" size="icon-sm" onClick={onOpenFile}>
               <FolderOpen size={16} />
@@ -275,7 +283,7 @@ export function FloatingToolConfig() {
   const title = hasSelection ? "标注属性" : "工具配置";
 
   useEffect(() => {
-    if (!showConfig || !image) return;
+    if (!showConfig) return;
 
     const handlePointerMove = (event: PointerEvent) => {
       if (!dragStateRef.current) return;
@@ -324,7 +332,7 @@ export function FloatingToolConfig() {
     event.preventDefault();
   };
 
-  if (!showConfig || !image) return null;
+  if (!showConfig) return null;
 
   return (
     <div

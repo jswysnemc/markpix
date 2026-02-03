@@ -15,6 +15,7 @@ import type {
   ToolbarOrientation,
   ThemeMode,
   AppConfig,
+  WhiteboardConfig,
 } from "@/types";
 
 /**
@@ -42,6 +43,13 @@ const defaultToolConfig: ToolConfig = {
   cornerRadius: 0, // 矩形圆角，默认为0
   arrowStyle: "filled", // 默认实心箭头
   magnifierScale: 2, // 放大镜倍率，默认2倍
+};
+
+const defaultWhiteboardConfig: WhiteboardConfig = {
+  width: 1280,
+  height: 720,
+  color: "#ffffff",
+  texture: "none",
 };
 
 /**
@@ -124,6 +132,10 @@ interface EditorState {
   systemFonts: string[];
   setSystemFonts: (fonts: string[]) => void;
   loadSystemFonts: () => Promise<void>;
+
+  // 白板配置
+  whiteboardConfig: WhiteboardConfig;
+  setWhiteboardConfig: (config: Partial<WhiteboardConfig>) => void;
 
   // UI 状态
   toolbarOrientation: ToolbarOrientation;
@@ -340,6 +352,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       console.error("加载系统字体失败:", error);
     }
   },
+
+  // 白板配置
+  whiteboardConfig: defaultWhiteboardConfig,
+  setWhiteboardConfig: (config) =>
+    set((state) => ({
+      whiteboardConfig: { ...state.whiteboardConfig, ...config },
+    })),
 
   // UI 状态
   toolbarOrientation: "horizontal",

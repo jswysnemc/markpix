@@ -127,12 +127,13 @@ export function RenderAnnotation({
         const px = -uy;
         const py = ux;
         
-        // 箭头头部大小
-        const headLength = Math.min(len * 0.35, 40 / scale);
-        const headWidth = headLength * 0.6;
+        // QQ 风格：尾部 0 宽 + 大头 + 锥形过渡
+        const thickness = annotation.strokeWidth / scale;
+        const headLength = Math.min(len * 0.4, thickness * 3);
+        const headWidth = Math.max(headLength * 0.5, thickness * 1.0);
         // 箭身宽度（从起点到箭头底部逐渐变宽）
-        const tailWidth = (annotation.strokeWidth * 0.8) / scale;
-        const bodyWidth = headWidth * 0.35;
+        const tailWidth = 0;
+        const bodyWidth = Math.max(headWidth * 0.35, thickness * 0.3);
         
         // 箭头各点坐标
         const headBase = { x: x2 - ux * headLength, y: y2 - uy * headLength };

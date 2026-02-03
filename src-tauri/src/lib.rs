@@ -556,7 +556,7 @@ fn exit_app(app: tauri::AppHandle) {
 
 /// 打开开发者工具
 #[tauri::command]
-fn open_devtools(_webview: tauri::WebviewWindow) {
+fn open_devtools(webview: tauri::WebviewWindow) {
     #[cfg(debug_assertions)]
     {
         if webview.is_devtools_open() {
@@ -564,6 +564,10 @@ fn open_devtools(_webview: tauri::WebviewWindow) {
         } else {
             webview.open_devtools();
         }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = webview;
     }
 }
 

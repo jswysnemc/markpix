@@ -152,7 +152,7 @@ export function SelectedAnnotationConfig({ orientation, compact = false }: Selec
               <Slider
                 value={arrow.strokeWidth}
                 onChange={(v) => updateSelectedAnnotations({ strokeWidth: v })}
-                min={1}
+                min={2}
                 max={20}
                 className={sliderClass}
               />
@@ -162,7 +162,7 @@ export function SelectedAnnotationConfig({ orientation, compact = false }: Selec
                 value={arrow.arrowStyle}
                 onChange={(v) => updateSelectedAnnotations({ arrowStyle: v as "normal" | "filled" })}
                 options={[
-                  { value: "filled", label: "实心" },
+                  { value: "filled", label: "QQ风格" },
                   { value: "normal", label: "普通" },
                 ]}
               />
@@ -260,9 +260,19 @@ export function SelectedAnnotationConfig({ orientation, compact = false }: Selec
                   onClick={() => {
                     const input = fontInputRef.current;
                     if (!input) return;
-                    input.focus();
-                    const picker = (input as HTMLInputElement & { showPicker?: () => void }).showPicker;
-                    if (picker) picker.call(input);
+                    updateAnnotations(selectedIds, { fontFamily: "" });
+                    pushHistory();
+                    requestAnimationFrame(() => {
+                      input.focus();
+                      const picker = (input as HTMLInputElement & { showPicker?: () => void }).showPicker;
+                      if (picker) {
+                        picker.call(input);
+                      } else {
+                        input.dispatchEvent(
+                          new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })
+                        );
+                      }
+                    });
                   }}
                   className={cn(
                     "absolute right-1.5 top-1/2 -translate-y-1/2",

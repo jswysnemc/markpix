@@ -54,7 +54,7 @@ export function ToolConfigPanel({ orientation, compact = false }: ToolConfigPane
               <Slider
                 value={toolConfig.strokeWidth}
                 onChange={(v) => setToolConfig({ strokeWidth: v })}
-                min={1}
+                min={2}
                 max={20}
                 className={sliderClass}
                 previewColor={toolConfig.strokeColor}
@@ -144,7 +144,7 @@ export function ToolConfigPanel({ orientation, compact = false }: ToolConfigPane
                   setToolConfig({ arrowStyle: v as "normal" | "filled" })
                 }
                 options={[
-                  { value: "filled", label: "实心" },
+                  { value: "filled", label: "QQ风格" },
                   { value: "normal", label: "普通" },
                 ]}
               />
@@ -235,9 +235,18 @@ export function ToolConfigPanel({ orientation, compact = false }: ToolConfigPane
                   onClick={() => {
                     const input = fontInputRef.current;
                     if (!input) return;
-                    input.focus();
-                    const picker = (input as HTMLInputElement & { showPicker?: () => void }).showPicker;
-                    if (picker) picker.call(input);
+                    setToolConfig({ fontFamily: "" });
+                    requestAnimationFrame(() => {
+                      input.focus();
+                      const picker = (input as HTMLInputElement & { showPicker?: () => void }).showPicker;
+                      if (picker) {
+                        picker.call(input);
+                      } else {
+                        input.dispatchEvent(
+                          new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })
+                        );
+                      }
+                    });
                   }}
                   className={cn(
                     "absolute right-1.5 top-1/2 -translate-y-1/2",
