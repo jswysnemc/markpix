@@ -1,6 +1,6 @@
 [package]
 name = "markpix"
-version = "0.5.1"
+version = "0.5.2"
 description = "一个现代化的图片标注工具"
 authors = ["snemc"]
 edition = "2021"

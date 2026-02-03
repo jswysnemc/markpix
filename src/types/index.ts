@@ -19,6 +19,21 @@ export type ToolType =
   | "magnifier"; // 放大镜
 
 /**
+ * 白板纹理类型
+ */
+export type WhiteboardTexture = "none" | "grid" | "dot";
+
+/**
+ * 白板配置
+ */
+export interface WhiteboardConfig {
+  width: number;
+  height: number;
+  color: string;
+  texture: WhiteboardTexture;
+}
+
+/**
  * 线条样式
  */
 export type LineStyle = "solid" | "dashed";

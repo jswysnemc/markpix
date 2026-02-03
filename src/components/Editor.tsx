@@ -9,7 +9,9 @@ import { AnnotationCanvas } from "./canvas/AnnotationCanvas";
 import { Toolbar, FloatingToolConfig } from "./toolbar/Toolbar";
 import { CustomActionsPanel } from "./CustomActionsPanel";
 import { SettingsDialog } from "./SettingsDialog";
-import type { CustomAction, ImageInfo } from "@/types";
+import { ColorPicker } from "@/components/ui/ColorPicker";
+import { Select } from "@/components/ui/Select";
+import type { CustomAction, ImageInfo, WhiteboardConfig, WhiteboardTexture } from "@/types";
 import Konva from "konva";
 import { Keyboard, Mouse, Zap, FolderOpen } from "lucide-react";
 
@@ -30,6 +32,10 @@ export function Editor() {
   const [showSettings, setShowSettings] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showOpenConfirm, setShowOpenConfirm] = useState(false);
+  const [showWhiteboardDialog, setShowWhiteboardDialog] = useState(false);
+  const [whiteboardDraft, setWhiteboardDraft] = useState<WhiteboardConfig>(
+    useEditorStore.getState().whiteboardConfig
+  );
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [cliOutputPattern, setCliOutputPattern] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -54,6 +60,7 @@ export function Editor() {
     viewState,
     setLastCopiedSnapshot,
     hasChangedSinceCopy,
+    setWhiteboardConfig,
   } = useEditorStore();
 
   // 监听容器大小变化
@@ -137,6 +144,8 @@ export function Editor() {
       try {
         // 加载配置
         await useEditorStore.getState().loadConfig();
+        // 加载系统字体（非阻塞）
+        useEditorStore.getState().loadSystemFonts();
 
         // 获取 CLI 传入的图片路径
         const initialPath = await invoke<string | null>("get_initial_image");
@@ -433,6 +442,118 @@ export function Editor() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 2000);
   }, []);
+
+  const handleOpenWhiteboardDialog = useCallback(() => {
+    if (image) return;
+    const currentConfig = useEditorStore.getState().whiteboardConfig;
+    setWhiteboardDraft({ ...currentConfig });
+    setShowWhiteboardDialog(true);
+  }, [image]);
+
+  const updateWhiteboardDraft = (patch: Partial<WhiteboardConfig>) => {
+    setWhiteboardDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const handleCreateBlank = useCallback(
+    async (config: WhiteboardConfig) => {
+      if (image) return;
+
+      const fallbackWidth = 1280;
+      const fallbackHeight = 720;
+      const width = Math.max(
+        100,
+        Math.round(config.width || containerSize.width || fallbackWidth)
+      );
+      const height = Math.max(
+        100,
+        Math.round(config.height || containerSize.height || fallbackHeight)
+      );
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const baseColor = config.color || "#ffffff";
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(0, 0, width, height);
+
+      const texture = config.texture as WhiteboardTexture;
+      if (texture !== "none") {
+        const rgb = baseColor.replace("#", "");
+        const parseHex = (value: string) => {
+          if (value.length === 3) {
+            return value
+              .split("")
+              .map((c) => parseInt(c + c, 16));
+          }
+          if (value.length === 6) {
+            return [
+              parseInt(value.slice(0, 2), 16),
+              parseInt(value.slice(2, 4), 16),
+              parseInt(value.slice(4, 6), 16),
+            ];
+          }
+          return [255, 255, 255];
+        };
+        const [r, g, b] = parseHex(rgb);
+        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        const lineColor =
+          luminance < 0.5 ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)";
+
+        ctx.save();
+        if (texture === "grid") {
+          const step = 40;
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = 1;
+          for (let x = step; x < width; x += step) {
+            ctx.beginPath();
+            ctx.moveTo(x + 0.5, 0);
+            ctx.lineTo(x + 0.5, height);
+            ctx.stroke();
+          }
+          for (let y = step; y < height; y += step) {
+            ctx.beginPath();
+            ctx.moveTo(0, y + 0.5);
+            ctx.lineTo(width, y + 0.5);
+            ctx.stroke();
+          }
+        } else if (texture === "dot") {
+          const step = 24;
+          const radius = 1;
+          ctx.fillStyle = lineColor;
+          for (let y = step; y < height; y += step) {
+            for (let x = step; x < width; x += step) {
+              ctx.beginPath();
+              ctx.arc(x, y, radius, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      const dataUrl = canvas.toDataURL("image/png");
+      const imageInfo: ImageInfo = {
+        src: dataUrl,
+        width,
+        height,
+        name: "whiteboard.png",
+      };
+
+      setImage(imageInfo);
+      setWhiteboardConfig({
+        width,
+        height,
+        color: baseColor,
+        texture,
+      });
+      await adjustWindowSize(width, height);
+      showToast("已创建白板");
+    },
+    [image, containerSize, setImage, adjustWindowSize, showToast, setWhiteboardConfig]
+  );
 
   // 复制到剪贴板 - 直接从内存复制，无需临时文件
   const handleCopy = async () => {
@@ -795,12 +916,19 @@ export function Editor() {
   ]);
 
   const [showCustomActions, setShowCustomActions] = useState(false);
+  const whiteboardPresets = [
+    { label: "720p", width: 1280, height: 720 },
+    { label: "1080p", width: 1920, height: 1080 },
+    { label: "2K", width: 2560, height: 1440 },
+    { label: "4K", width: 3840, height: 2160 },
+  ];
 
   return (
     <div className="flex flex-col w-screen h-screen bg-muted/30">
       {/* 顶部工具栏 */}
       <Toolbar
         onOpenFile={handleOpenFile}
+        onCreateBlank={handleOpenWhiteboardDialog}
         onSave={handleSave}
         onCopy={handleCopy}
         onOpenSettings={() => setShowSettings(true)}
@@ -919,6 +1047,123 @@ export function Editor() {
 
       {/* 设置对话框 */}
       <SettingsDialog open={showSettings} onClose={() => setShowSettings(false)} />
+
+      {/* 白板创建对话框 */}
+      {showWhiteboardDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowWhiteboardDialog(false)}
+          />
+          <div className="relative z-10 w-full max-w-md p-6 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-2xl">
+            <h3 className="text-lg font-semibold mb-2">创建白板</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              选择预置分辨率或自定义尺寸，并设置底色与纹理。
+            </p>
+            <div className="space-y-4">
+              <div>
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">
+                  预置分辨率
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {whiteboardPresets.map((preset) => (
+                    <button
+                      key={preset.label}
+                      onClick={() =>
+                        updateWhiteboardDraft({
+                          width: preset.width,
+                          height: preset.height,
+                        })
+                      }
+                      className="px-3 py-1 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400 w-10">
+                  尺寸
+                </div>
+                <input
+                  type="number"
+                  min={100}
+                  max={10000}
+                  value={whiteboardDraft.width}
+                  onChange={(e) =>
+                    updateWhiteboardDraft({
+                      width: Number(e.target.value) || 0,
+                    })
+                  }
+                  className="w-24 rounded-md border border-input px-2 py-1 text-sm bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <span className="text-xs text-muted-foreground">×</span>
+                <input
+                  type="number"
+                  min={100}
+                  max={10000}
+                  value={whiteboardDraft.height}
+                  onChange={(e) =>
+                    updateWhiteboardDraft({
+                      height: Number(e.target.value) || 0,
+                    })
+                  }
+                  className="w-24 rounded-md border border-input px-2 py-1 text-sm bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400 w-10">
+                  底色
+                </div>
+                <ColorPicker
+                  value={whiteboardDraft.color}
+                  onChange={(color) => updateWhiteboardDraft({ color })}
+                />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400 w-10">
+                  纹理
+                </div>
+                <Select
+                  value={whiteboardDraft.texture}
+                  onChange={(value) =>
+                    updateWhiteboardDraft({
+                      texture: value as WhiteboardTexture,
+                    })
+                  }
+                  options={[
+                    { value: "none", label: "无" },
+                    { value: "grid", label: "网格" },
+                    { value: "dot", label: "圆点" },
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 justify-end mt-6">
+              <button
+                onClick={() => setShowWhiteboardDialog(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={async () => {
+                  setShowWhiteboardDialog(false);
+                  await handleCreateBlank(whiteboardDraft);
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors"
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 关闭确认对话框 */}
       {showCloseConfirm && (

@@ -3,6 +3,7 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -397,6 +398,156 @@ fn get_config(app_state: State<AppState>) -> Result<AppConfig, String> {
     Ok(app_state.config.lock().map_err(|e| e.to_string())?.clone())
 }
 
+/// 获取系统字体列表
+#[tauri::command]
+fn list_system_fonts() -> Vec<String> {
+    let fonts = fetch_system_fonts().unwrap_or_else(|err| {
+        eprintln!("加载系统字体失败: {}", err);
+        vec![]
+    });
+
+    let mut normalized = normalize_fonts(fonts);
+    if normalized.is_empty() {
+        normalized = vec![
+            "system-ui".to_string(),
+            "sans-serif".to_string(),
+            "serif".to_string(),
+            "monospace".to_string(),
+        ];
+    }
+
+    normalized
+}
+
+fn normalize_fonts(fonts: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    for font in fonts {
+        let trimmed = font.trim().trim_matches('"');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = trimmed.to_lowercase();
+        if seen.insert(key) {
+            result.push(trimmed.to_string());
+        }
+    }
+
+    result.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    result
+}
+
+#[cfg(target_os = "linux")]
+fn fetch_system_fonts() -> Result<Vec<String>, String> {
+    let output = Command::new("fc-list")
+        .args(["-f", "%{family}\n"])
+        .output()
+        .map_err(|e| format!("调用 fc-list 失败: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!("fc-list 执行失败: {}", output.status));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut fonts = Vec::new();
+    for line in stdout.lines() {
+        for family in line.split(',') {
+            let name = family.trim();
+            if !name.is_empty() {
+                fonts.push(name.to_string());
+            }
+        }
+    }
+
+    Ok(fonts)
+}
+
+#[cfg(target_os = "macos")]
+fn fetch_system_fonts() -> Result<Vec<String>, String> {
+    let output = Command::new("system_profiler")
+        .args(["SPFontsDataType"])
+        .output()
+        .map_err(|e| format!("调用 system_profiler 失败: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!("system_profiler 执行失败: {}", output.status));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut fonts = Vec::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Family:") {
+            let name = rest.trim();
+            if !name.is_empty() {
+                fonts.push(name.to_string());
+            }
+        }
+    }
+
+    if fonts.is_empty() {
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("Full Name:") {
+                let name = rest.trim();
+                if !name.is_empty() {
+                    fonts.push(name.to_string());
+                }
+            }
+        }
+    }
+
+    Ok(fonts)
+}
+
+#[cfg(target_os = "windows")]
+fn fetch_system_fonts() -> Result<Vec<String>, String> {
+    let script = r#"
+$fonts = Get-ItemProperty -Path "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+$fonts.PSObject.Properties |
+  Where-Object { $_.Name -notmatch '^PS' } |
+  ForEach-Object { $_.Name }
+"#;
+
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .map_err(|e| format!("调用 powershell 失败: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!("powershell 执行失败: {}", output.status));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut fonts = Vec::new();
+    for line in stdout.lines() {
+        let mut name = line.trim().to_string();
+        for suffix in [
+            "(TrueType)",
+            "(OpenType)",
+            "(Type 1)",
+            "(Raster)",
+            "(Collection)",
+        ] {
+            if name.ends_with(suffix) {
+                name = name.trim_end_matches(suffix).trim().to_string();
+            }
+        }
+        if !name.is_empty() {
+            fonts.push(name);
+        }
+    }
+
+    Ok(fonts)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn fetch_system_fonts() -> Result<Vec<String>, String> {
+    Ok(vec![])
+}
+
 /// 退出应用程序
 #[tauri::command]
 fn exit_app(app: tauri::AppHandle) {
@@ -413,6 +564,10 @@ fn open_devtools(webview: tauri::WebviewWindow) {
         } else {
             webview.open_devtools();
         }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = webview;
     }
 }
 
@@ -463,6 +618,7 @@ pub fn run_with_args(
             exit_app,
             save_config,
             get_config,
+            list_system_fonts,
             open_devtools,
         ])
         .run(tauri::generate_context!())

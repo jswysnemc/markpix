@@ -825,8 +825,8 @@ export function AnnotationCanvas({
               if (ann.type === "image") {
                 const ia = ann as { width: number; height: number };
                 updateAnnotation(ann.id, {
-                  width: clamp(ia.width * scaleFactor, 20, 2000),
-                  height: clamp(ia.height * scaleFactor, 20, 2000)
+                  width: Math.max(20, ia.width * scaleFactor),
+                  height: Math.max(20, ia.height * scaleFactor)
                 });
               }
             });
@@ -867,8 +867,8 @@ export function AnnotationCanvas({
       const scaleBy = 1.1;
       const newScale =
         e.evt.deltaY < 0
-          ? clamp(oldScale * scaleBy, 0.1, 5)
-          : clamp(oldScale / scaleBy, 0.1, 5);
+          ? Math.max(oldScale * scaleBy, 0.1)
+          : Math.max(oldScale / scaleBy, 0.1);
 
       // 以鼠标位置为中心缩放
       const { x, y } = getImageFit();
