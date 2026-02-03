@@ -825,8 +825,8 @@ export function AnnotationCanvas({
               if (ann.type === "image") {
                 const ia = ann as { width: number; height: number };
                 updateAnnotation(ann.id, {
-                  width: clamp(ia.width * scaleFactor, 20, 2000),
-                  height: clamp(ia.height * scaleFactor, 20, 2000)
+                  width: Math.max(20, ia.width * scaleFactor),
+                  height: Math.max(20, ia.height * scaleFactor)
                 });
               }
             });
