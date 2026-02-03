@@ -867,8 +867,8 @@ export function AnnotationCanvas({
       const scaleBy = 1.1;
       const newScale =
         e.evt.deltaY < 0
-          ? clamp(oldScale * scaleBy, 0.1, 5)
-          : clamp(oldScale / scaleBy, 0.1, 5);
+          ? Math.max(oldScale * scaleBy, 0.1)
+          : Math.max(oldScale / scaleBy, 0.1);
 
       // 以鼠标位置为中心缩放
       const { x, y } = getImageFit();

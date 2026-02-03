@@ -1,5 +1,5 @@
 // 工具配置面板
-import { useId } from "react";
+import { useId, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { buildFontOptions } from "@/lib/fonts";
 import { useEditorStore } from "@/store/editorStore";
@@ -7,13 +7,14 @@ import { ColorPicker } from "@/components/ui/ColorPicker";
 import { Slider } from "@/components/ui/Slider";
 import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
-import { RotateCcw } from "lucide-react";
+import { ChevronDown, RotateCcw } from "lucide-react";
 
 interface ToolConfigPanelProps {
   orientation: "horizontal" | "vertical";
+  compact?: boolean;
 }
 
-export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
+export function ToolConfigPanel({ orientation, compact = false }: ToolConfigPanelProps) {
   const {
     currentTool,
     toolConfig,
@@ -24,8 +25,12 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
   } = useEditorStore();
 
   const isHorizontal = orientation === "horizontal";
+  const isCompact = compact;
+  const sliderClass = isCompact ? "w-20" : "w-24";
   const fontOptions = buildFontOptions(systemFonts, toolConfig.fontFamily);
   const fontListId = useId();
+  const fontInputRef = useRef<HTMLInputElement>(null);
+  const fontInputClass = isCompact ? "min-w-[110px]" : "min-w-[140px]";
 
   // 根据当前工具显示不同配置
   const renderConfig = () => {
@@ -33,44 +38,44 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "rectangle":
         return (
           <>
-            <ConfigItem label="边框颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="边框颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.strokeColor}
                 onChange={(color) => setToolConfig({ strokeColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="填充颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="填充颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.fillColor}
                 onChange={(color) => setToolConfig({ fillColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="边框粗细" isHorizontal={isHorizontal}>
+            <ConfigItem label="边框粗细" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.strokeWidth}
                 onChange={(v) => setToolConfig({ strokeWidth: v })}
                 min={1}
                 max={20}
-                className="w-24"
+                className={sliderClass}
                 previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
-            <ConfigItem label="填充透明度" isHorizontal={isHorizontal}>
+            <ConfigItem label="填充透明度" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.fillOpacity * 100}
                 onChange={(v) => setToolConfig({ fillOpacity: v / 100 })}
                 min={0}
                 max={100}
-                className="w-24"
+                className={sliderClass}
               />
             </ConfigItem>
-            <ConfigItem label="圆角" isHorizontal={isHorizontal}>
+            <ConfigItem label="圆角" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.cornerRadius}
                 onChange={(v) => setToolConfig({ cornerRadius: v })}
                 min={0}
                 max={50}
-                className="w-24"
+                className={sliderClass}
               />
             </ConfigItem>
           </>
@@ -79,35 +84,35 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "ellipse":
         return (
           <>
-            <ConfigItem label="边框颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="边框颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.strokeColor}
                 onChange={(color) => setToolConfig({ strokeColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="填充颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="填充颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.fillColor}
                 onChange={(color) => setToolConfig({ fillColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="边框粗细" isHorizontal={isHorizontal}>
+            <ConfigItem label="边框粗细" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.strokeWidth}
                 onChange={(v) => setToolConfig({ strokeWidth: v })}
                 min={1}
                 max={20}
-                className="w-24"
+                className={sliderClass}
                 previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
-            <ConfigItem label="填充透明度" isHorizontal={isHorizontal}>
+            <ConfigItem label="填充透明度" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.fillOpacity * 100}
                 onChange={(v) => setToolConfig({ fillOpacity: v / 100 })}
                 min={0}
                 max={100}
-                className="w-24"
+                className={sliderClass}
               />
             </ConfigItem>
           </>
@@ -116,23 +121,23 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "arrow":
         return (
           <>
-            <ConfigItem label="颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.strokeColor}
                 onChange={(color) => setToolConfig({ strokeColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="粗细" isHorizontal={isHorizontal}>
+            <ConfigItem label="粗细" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.strokeWidth}
                 onChange={(v) => setToolConfig({ strokeWidth: v })}
                 min={1}
                 max={20}
-                className="w-24"
+                className={sliderClass}
                 previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
-            <ConfigItem label="箭头样式" isHorizontal={isHorizontal}>
+            <ConfigItem label="箭头样式" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Select
                 value={toolConfig.arrowStyle}
                 onChange={(v) =>
@@ -144,7 +149,7 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
                 ]}
               />
             </ConfigItem>
-            <ConfigItem label="线条样式" isHorizontal={isHorizontal}>
+            <ConfigItem label="线条样式" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Select
                 value={toolConfig.lineStyle}
                 onChange={(v) =>
@@ -162,23 +167,23 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "line":
         return (
           <>
-            <ConfigItem label="颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.strokeColor}
                 onChange={(color) => setToolConfig({ strokeColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="粗细" isHorizontal={isHorizontal}>
+            <ConfigItem label="粗细" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.strokeWidth}
                 onChange={(v) => setToolConfig({ strokeWidth: v })}
                 min={1}
                 max={20}
-                className="w-24"
+                className={sliderClass}
                 previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
-            <ConfigItem label="样式" isHorizontal={isHorizontal}>
+            <ConfigItem label="样式" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Select
                 value={toolConfig.lineStyle}
                 onChange={(v) =>
@@ -196,34 +201,53 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "text":
         return (
           <>
-            <ConfigItem label="颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.strokeColor}
                 onChange={(color) => setToolConfig({ strokeColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="字号" isHorizontal={isHorizontal}>
+            <ConfigItem label="字号" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.fontSize}
                 onChange={(v) => setToolConfig({ fontSize: v })}
                 min={12}
                 max={72}
-                className="w-24"
+                className={sliderClass}
               />
             </ConfigItem>
-            <ConfigItem label="字体" isHorizontal={isHorizontal}>
-              <div className="min-w-[140px]">
+            <ConfigItem label="字体" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <div className={cn("relative", fontInputClass)}>
                 <input
+                  ref={fontInputRef}
                   value={toolConfig.fontFamily}
                   onChange={(e) => setToolConfig({ fontFamily: e.target.value })}
                   list={fontListId}
                   placeholder="搜索字体"
                   className={cn(
-                    "w-full rounded-md border border-input px-3 py-1.5 text-sm",
+                    "w-full rounded-md border border-input px-3 py-1.5 pr-6 text-sm",
                     "bg-background text-foreground",
                     "focus:outline-none focus:ring-1 focus:ring-ring"
                   )}
                 />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = fontInputRef.current;
+                    if (!input) return;
+                    input.focus();
+                    const picker = (input as HTMLInputElement & { showPicker?: () => void }).showPicker;
+                    if (picker) picker.call(input);
+                  }}
+                  className={cn(
+                    "absolute right-1.5 top-1/2 -translate-y-1/2",
+                    "p-0.5 rounded text-gray-400 hover:text-gray-600",
+                    "hover:bg-gray-100 dark:hover:bg-gray-800"
+                  )}
+                  aria-label="展开字体列表"
+                >
+                  <ChevronDown size={14} />
+                </button>
                 <datalist id={fontListId}>
                   {fontOptions.map((option) => (
                     <option key={option.value} value={option.value} label={option.label} />
@@ -231,7 +255,7 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
                 </datalist>
               </div>
             </ConfigItem>
-            <ConfigItem label="样式" isHorizontal={isHorizontal}>
+            <ConfigItem label="样式" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Select
                 value={toolConfig.textStyle}
                 onChange={(v) => setToolConfig({ textStyle: v as "normal" | "bubble" })}
@@ -243,19 +267,19 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
             </ConfigItem>
             {toolConfig.textStyle === "bubble" && (
               <>
-                <ConfigItem label="气泡边框" isHorizontal={isHorizontal}>
+                <ConfigItem label="气泡边框" isHorizontal={isHorizontal} isCompact={isCompact}>
                   <ColorPicker
                     value={toolConfig.bubbleStroke || toolConfig.strokeColor}
                     onChange={(color) => setToolConfig({ bubbleStroke: color })}
                   />
                 </ConfigItem>
-                <ConfigItem label="气泡背景" isHorizontal={isHorizontal}>
+                <ConfigItem label="气泡背景" isHorizontal={isHorizontal} isCompact={isCompact}>
                   <ColorPicker
                     value={toolConfig.bubbleFill}
                     onChange={(color) => setToolConfig({ bubbleFill: color })}
                   />
                 </ConfigItem>
-                <ConfigItem label="尾巴位置" isHorizontal={isHorizontal}>
+                <ConfigItem label="尾巴位置" isHorizontal={isHorizontal} isCompact={isCompact}>
                   <Select
                     value={toolConfig.bubbleTailPosition}
                     onChange={(v) => setToolConfig({ bubbleTailPosition: v as "left" | "right" })}
@@ -273,19 +297,19 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "brush":
         return (
           <>
-            <ConfigItem label="颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.strokeColor}
                 onChange={(color) => setToolConfig({ strokeColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="笔刷大小" isHorizontal={isHorizontal}>
+            <ConfigItem label="笔刷大小" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.brushSize}
                 onChange={(v) => setToolConfig({ brushSize: v })}
                 min={1}
                 max={50}
-                className="w-24"
+                className={sliderClass}
                 previewColor={toolConfig.strokeColor}
               />
             </ConfigItem>
@@ -295,22 +319,22 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "marker":
         return (
           <>
-            <ConfigItem label="颜色" isHorizontal={isHorizontal}>
+            <ConfigItem label="颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
               <ColorPicker
                 value={toolConfig.strokeColor}
                 onChange={(color) => setToolConfig({ strokeColor: color })}
               />
             </ConfigItem>
-            <ConfigItem label="大小" isHorizontal={isHorizontal}>
+            <ConfigItem label="大小" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.markerSize}
                 onChange={(v) => setToolConfig({ markerSize: v })}
                 min={20}
                 max={60}
-                className="w-24"
+                className={sliderClass}
               />
             </ConfigItem>
-            <ConfigItem label="类型" isHorizontal={isHorizontal}>
+            <ConfigItem label="类型" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Select
                 value={toolConfig.markerType}
                 onChange={(v) =>
@@ -322,7 +346,7 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
                 ]}
               />
             </ConfigItem>
-            <ConfigItem label="样式" isHorizontal={isHorizontal}>
+            <ConfigItem label="样式" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Select
                 value={toolConfig.markerStyle}
                 onChange={(v) =>
@@ -334,7 +358,7 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
                 ]}
               />
             </ConfigItem>
-            <ConfigItem label={`当前: ${markerCounter}`} isHorizontal={isHorizontal}>
+            <ConfigItem label={`当前: ${markerCounter}`} isHorizontal={isHorizontal} isCompact={isCompact}>
               <Button
                 variant="ghost"
                 size="sm"
@@ -350,22 +374,22 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "blur":
         return (
           <>
-            <ConfigItem label="模糊强度" isHorizontal={isHorizontal}>
+            <ConfigItem label="模糊强度" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.blurRadius}
                 onChange={(v) => setToolConfig({ blurRadius: v })}
                 min={5}
                 max={30}
-                className="w-24"
+                className={sliderClass}
               />
             </ConfigItem>
-            <ConfigItem label="圆角" isHorizontal={isHorizontal}>
+            <ConfigItem label="圆角" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.blurCornerRadius}
                 onChange={(v) => setToolConfig({ blurCornerRadius: v })}
                 min={0}
                 max={50}
-                className="w-24"
+                className={sliderClass}
               />
             </ConfigItem>
           </>
@@ -374,17 +398,17 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
       case "magnifier":
         return (
           <>
-            <ConfigItem label="放大倍率" isHorizontal={isHorizontal}>
+            <ConfigItem label="放大倍率" isHorizontal={isHorizontal} isCompact={isCompact}>
               <Slider
                 value={toolConfig.magnifierScale}
                 onChange={(v) => setToolConfig({ magnifierScale: v })}
                 min={1.5}
                 max={5}
                 step={0.1}
-                className="w-24"
+                className={sliderClass}
               />
             </ConfigItem>
-            <ConfigItem label={`${toolConfig.magnifierScale.toFixed(1)}x`} isHorizontal={isHorizontal}>
+            <ConfigItem label={`${toolConfig.magnifierScale.toFixed(1)}x`} isHorizontal={isHorizontal} isCompact={isCompact}>
               <span className="text-xs text-gray-400">滚轮调节</span>
             </ConfigItem>
           </>
@@ -398,8 +422,14 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
   return (
     <div
       className={cn(
-        "flex gap-4",
-        isHorizontal ? "flex-row items-center" : "flex-col"
+        "flex",
+        isHorizontal
+          ? isCompact
+            ? "flex-row flex-wrap items-center gap-2"
+            : "flex-row items-center gap-4"
+          : isCompact
+            ? "flex-col gap-2"
+            : "flex-col gap-3"
       )}
     >
       {renderConfig()}
@@ -412,17 +442,24 @@ interface ConfigItemProps {
   label: string;
   children: React.ReactNode;
   isHorizontal: boolean;
+  isCompact?: boolean;
 }
 
-function ConfigItem({ label, children, isHorizontal }: ConfigItemProps) {
+function ConfigItem({ label, children, isHorizontal, isCompact = false }: ConfigItemProps) {
   return (
     <div
       className={cn(
-        "flex gap-2",
-        isHorizontal ? "flex-row items-center" : "flex-col"
+        "flex",
+        isHorizontal ? "flex-row items-center" : "flex-col",
+        isCompact ? "gap-1" : "gap-2"
       )}
     >
-      <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap font-medium">
+      <span
+        className={cn(
+          "text-gray-500 dark:text-gray-400 whitespace-nowrap font-medium",
+          isCompact ? "text-[10px]" : "text-xs"
+        )}
+      >
         {label}
       </span>
       {children}

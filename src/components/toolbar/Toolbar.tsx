@@ -1,5 +1,6 @@
 // 顶部工具栏组件 - 伪装为窗口标题栏
-import { cn } from "@/lib/utils";
+import { useEffect, useRef, useState } from "react";
+import { cn, clamp } from "@/lib/utils";
 import { useEditorStore } from "@/store/editorStore";
 import { Button } from "@/components/ui/Button";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -31,6 +32,8 @@ import {
   ZoomOut,
   Terminal,
   Search,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import type { ToolType } from "@/types";
 
@@ -88,7 +91,7 @@ export function Toolbar({
     customActions,
   } = useEditorStore();
 
-  const handleZoomIn = () => setViewState({ scale: Math.min(viewState.scale * 1.2, 5) });
+  const handleZoomIn = () => setViewState({ scale: viewState.scale * 1.2 });
   const handleZoomOut = () => setViewState({ scale: Math.max(viewState.scale / 1.2, 0.1) });
 
   return (
@@ -240,6 +243,16 @@ export function Toolbar({
 // 工具配置面板（浮动）
 export function FloatingToolConfig() {
   const { currentTool, image, selectedIds } = useEditorStore();
+  const [orientation, setOrientation] = useState<"horizontal" | "vertical">("horizontal");
+  const [collapsed, setCollapsed] = useState(false);
+  const [position, setPosition] = useState({ x: 16, y: 16 });
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragStateRef = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
 
   // 绘图工具显示工具配置面板
   const isDrawingTool = [
@@ -259,23 +272,131 @@ export function FloatingToolConfig() {
   // 显示条件：绘图工具 或 有选中的标注
   const showConfig = isDrawingTool || hasSelection;
 
+  const title = hasSelection ? "标注属性" : "工具配置";
+
+  useEffect(() => {
+    if (!showConfig || !image) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!dragStateRef.current) return;
+
+      const { startX, startY, originX, originY } = dragStateRef.current;
+      const deltaX = event.clientX - startX;
+      const deltaY = event.clientY - startY;
+      let nextX = originX + deltaX;
+      let nextY = originY + deltaY;
+
+      const panel = panelRef.current;
+      const parent = panel?.parentElement;
+      if (panel && parent) {
+        const parentRect = parent.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        const maxX = Math.max(0, parentRect.width - panelRect.width);
+        const maxY = Math.max(0, parentRect.height - panelRect.height);
+        nextX = clamp(nextX, 0, maxX);
+        nextY = clamp(nextY, 0, maxY);
+      }
+
+      setPosition({ x: nextX, y: nextY });
+    };
+
+    const handlePointerUp = () => {
+      dragStateRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [showConfig, image]);
+
+  const handleDragStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("button")) return;
+    dragStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: position.x,
+      originY: position.y,
+    };
+    event.preventDefault();
+  };
+
   if (!showConfig || !image) return null;
 
   return (
     <div
+      ref={panelRef}
       className={cn(
-        "absolute z-10 p-2 rounded-lg",
+        "absolute z-10 p-1.5 rounded-md",
         "bg-white dark:bg-gray-900",
         "border border-gray-200 dark:border-gray-700",
-        "shadow-lg",
-        "top-4 left-4" // 位于画布左上角
+        "shadow-md"
       )}
+      style={{ left: position.x, top: position.y }}
     >
-      {/* 有选中的标注时显示标注属性面板，否则显示工具配置面板 */}
-      {hasSelection ? (
-        <SelectedAnnotationConfig orientation="horizontal" />
-      ) : (
-        <ToolConfigPanel orientation="horizontal" />
+      <div
+        className={cn(
+          "flex items-center justify-between gap-1 px-1.5 py-0.5 rounded-md",
+          "bg-gray-50 dark:bg-gray-800/60",
+          "cursor-move select-none"
+        )}
+        onPointerDown={handleDragStart}
+      >
+        <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-300">
+          {title}
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setOrientation("horizontal")}
+            className={cn(
+              "px-1.5 py-0 text-[10px] rounded border leading-none",
+              orientation === "horizontal"
+                ? "bg-blue-500 text-white border-blue-500"
+                : "bg-transparent text-gray-500 border-transparent hover:border-gray-300 dark:text-gray-300 dark:hover:border-gray-600"
+            )}
+          >
+            横
+          </button>
+          <button
+            type="button"
+            onClick={() => setOrientation("vertical")}
+            className={cn(
+              "px-1.5 py-0 text-[10px] rounded border leading-none",
+              orientation === "vertical"
+                ? "bg-blue-500 text-white border-blue-500"
+                : "bg-transparent text-gray-500 border-transparent hover:border-gray-300 dark:text-gray-300 dark:hover:border-gray-600"
+            )}
+          >
+            竖
+          </button>
+          <button
+            type="button"
+            onClick={() => setCollapsed((prev) => !prev)}
+            className={cn(
+              "p-0.5 rounded-md",
+              "text-gray-500 hover:text-gray-900 hover:bg-gray-200",
+              "dark:text-gray-300 dark:hover:text-white dark:hover:bg-gray-700"
+            )}
+            aria-label={collapsed ? "展开配置面板" : "收起配置面板"}
+          >
+            {collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+          </button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div className="mt-1">
+          {/* 有选中的标注时显示标注属性面板，否则显示工具配置面板 */}
+          {hasSelection ? (
+            <SelectedAnnotationConfig orientation={orientation} compact />
+          ) : (
+            <ToolConfigPanel orientation={orientation} compact />
+          )}
+        </div>
       )}
     </div>
   );
