@@ -1,5 +1,7 @@
 // 工具配置面板
+import { useId } from "react";
 import { cn } from "@/lib/utils";
+import { buildFontOptions } from "@/lib/fonts";
 import { useEditorStore } from "@/store/editorStore";
 import { ColorPicker } from "@/components/ui/ColorPicker";
 import { Slider } from "@/components/ui/Slider";
@@ -12,9 +14,18 @@ interface ToolConfigPanelProps {
 }
 
 export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
-  const { currentTool, toolConfig, setToolConfig, resetMarkerCounter, markerCounter } = useEditorStore();
+  const {
+    currentTool,
+    toolConfig,
+    setToolConfig,
+    resetMarkerCounter,
+    markerCounter,
+    systemFonts,
+  } = useEditorStore();
 
   const isHorizontal = orientation === "horizontal";
+  const fontOptions = buildFontOptions(systemFonts, toolConfig.fontFamily);
+  const fontListId = useId();
 
   // 根据当前工具显示不同配置
   const renderConfig = () => {
@@ -201,15 +212,24 @@ export function ToolConfigPanel({ orientation }: ToolConfigPanelProps) {
               />
             </ConfigItem>
             <ConfigItem label="字体" isHorizontal={isHorizontal}>
-              <Select
-                value={toolConfig.fontFamily}
-                onChange={(v) => setToolConfig({ fontFamily: v })}
-                options={[
-                  { value: "system-ui", label: "系统字体" },
-                  { value: "serif", label: "衬线体" },
-                  { value: "monospace", label: "等宽字体" },
-                ]}
-              />
+              <div className="min-w-[140px]">
+                <input
+                  value={toolConfig.fontFamily}
+                  onChange={(e) => setToolConfig({ fontFamily: e.target.value })}
+                  list={fontListId}
+                  placeholder="搜索字体"
+                  className={cn(
+                    "w-full rounded-md border border-input px-3 py-1.5 text-sm",
+                    "bg-background text-foreground",
+                    "focus:outline-none focus:ring-1 focus:ring-ring"
+                  )}
+                />
+                <datalist id={fontListId}>
+                  {fontOptions.map((option) => (
+                    <option key={option.value} value={option.value} label={option.label} />
+                  ))}
+                </datalist>
+              </div>
             </ConfigItem>
             <ConfigItem label="样式" isHorizontal={isHorizontal}>
               <Select

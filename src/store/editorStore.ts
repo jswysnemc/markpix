@@ -120,6 +120,11 @@ interface EditorState {
   customActions: CustomAction[];
   setCustomActions: (actions: CustomAction[]) => void;
 
+  // 字体列表
+  systemFonts: string[];
+  setSystemFonts: (fonts: string[]) => void;
+  loadSystemFonts: () => Promise<void>;
+
   // UI 状态
   toolbarOrientation: ToolbarOrientation;
   setToolbarOrientation: (orientation: ToolbarOrientation) => void;
@@ -322,6 +327,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setCustomActions: (actions) => {
     set({ customActions: actions });
     get().saveConfig();
+  },
+
+  // 字体列表
+  systemFonts: [],
+  setSystemFonts: (fonts) => set({ systemFonts: fonts }),
+  loadSystemFonts: async () => {
+    try {
+      const fonts = await invoke<string[]>("list_system_fonts");
+      set({ systemFonts: fonts });
+    } catch (error) {
+      console.error("加载系统字体失败:", error);
+    }
   },
 
   // UI 状态

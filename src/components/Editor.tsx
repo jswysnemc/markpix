@@ -137,6 +137,8 @@ export function Editor() {
       try {
         // 加载配置
         await useEditorStore.getState().loadConfig();
+        // 加载系统字体（非阻塞）
+        useEditorStore.getState().loadSystemFonts();
 
         // 获取 CLI 传入的图片路径
         const initialPath = await invoke<string | null>("get_initial_image");

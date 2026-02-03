@@ -1,5 +1,7 @@
 // 选中标注的属性配置面板
+import { useId } from "react";
 import { cn } from "@/lib/utils";
+import { buildFontOptions } from "@/lib/fonts";
 import { useEditorStore } from "@/store/editorStore";
 import { ColorPicker } from "@/components/ui/ColorPicker";
 import { Slider } from "@/components/ui/Slider";
@@ -11,9 +13,10 @@ interface SelectedAnnotationConfigProps {
 }
 
 export function SelectedAnnotationConfig({ orientation }: SelectedAnnotationConfigProps) {
-  const { selectedIds, annotations, updateAnnotations, pushHistory } = useEditorStore();
+  const { selectedIds, annotations, updateAnnotations, pushHistory, systemFonts } = useEditorStore();
 
   const isHorizontal = orientation === "horizontal";
+  const fontListId = useId();
 
   // 获取选中的标注
   const selectedAnnotations = annotations.filter((a) => selectedIds.includes(a.id));
@@ -208,6 +211,7 @@ export function SelectedAnnotationConfig({ orientation }: SelectedAnnotationConf
 
       case "text": {
         const text = firstAnnotation as Extract<Annotation, { type: "text" }>;
+        const fontOptions = buildFontOptions(systemFonts, text.fontFamily);
         return (
           <>
             <ConfigItem label="颜色" isHorizontal={isHorizontal}>
@@ -226,15 +230,30 @@ export function SelectedAnnotationConfig({ orientation }: SelectedAnnotationConf
               />
             </ConfigItem>
             <ConfigItem label="字体" isHorizontal={isHorizontal}>
-              <Select
-                value={text.fontFamily}
-                onChange={(v) => updateSelectedAnnotations({ fontFamily: v })}
-                options={[
-                  { value: "system-ui", label: "系统字体" },
-                  { value: "serif", label: "衬线体" },
-                  { value: "monospace", label: "等宽字体" },
-                ]}
-              />
+              <div className="min-w-[140px]">
+                <input
+                  value={text.fontFamily}
+                  onChange={(e) => updateAnnotations(selectedIds, { fontFamily: e.target.value })}
+                  onBlur={() => pushHistory()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      (e.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
+                  list={fontListId}
+                  placeholder="搜索字体"
+                  className={cn(
+                    "w-full rounded-md border border-input px-3 py-1.5 text-sm",
+                    "bg-background text-foreground",
+                    "focus:outline-none focus:ring-1 focus:ring-ring"
+                  )}
+                />
+                <datalist id={fontListId}>
+                  {fontOptions.map((option) => (
+                    <option key={option.value} value={option.value} label={option.label} />
+                  ))}
+                </datalist>
+              </div>
             </ConfigItem>
             <ConfigItem label="样式" isHorizontal={isHorizontal}>
               <Select
