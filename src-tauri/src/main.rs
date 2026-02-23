@@ -12,7 +12,7 @@ use std::io::{self, Read};
 #[derive(Parser, Debug)]
 #[command(name = "markpix")]
 #[command(author = "snemc")]
-#[command(version = "0.2.0")]
+#[command(version = "0.5.3")]
 #[command(about = "一个现代化的图片标注工具", long_about = None)]
 struct Args {
     /// 要打开的图片文件路径（位置参数）
@@ -31,6 +31,10 @@ struct Args {
     /// 支持占位符: {input_file_base}, {YYYY_MM_DD-hh-mm-ss}
     #[arg(short = 'o', long = "output-filename")]
     output_filename: Option<String>,
+
+    /// 启动时进入全屏模式
+    #[arg(long = "fullscreen")]
+    fullscreen: bool,
 }
 
 fn main() {
@@ -57,7 +61,7 @@ fn main() {
     // 处理输出文件名模式
     let output_pattern = args.output_filename;
 
-    markpix_lib::run_with_args(initial_image, config_path, output_pattern)
+    markpix_lib::run_with_args(initial_image, config_path, output_pattern, args.fullscreen)
 }
 
 /// 解析路径为绝对路径

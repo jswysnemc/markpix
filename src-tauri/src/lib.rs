@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 
 /// 应用状态：存储 CLI 传入的参数
 pub struct AppState {
@@ -573,7 +573,7 @@ fn open_devtools(webview: tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    run_with_args(None, None, None)
+    run_with_args(None, None, None, false)
 }
 
 /// 带参数运行（供 main.rs 调用）
@@ -581,6 +581,7 @@ pub fn run_with_args(
     initial_image: Option<String>,
     config_path: Option<String>,
     output_pattern: Option<String>,
+    fullscreen: bool,
 ) {
     // 加载配置（优先使用 CLI 指定的配置文件）
     let config = if let Some(ref path) = config_path {
@@ -602,6 +603,18 @@ pub fn run_with_args(
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
+        .setup(move |app| {
+            if fullscreen {
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Err(err) = window.set_fullscreen(true) {
+                        eprintln!("设置全屏模式失败: {}", err);
+                    }
+                } else {
+                    eprintln!("警告: 未找到主窗口，无法应用全屏模式");
+                }
+            }
+            Ok(())
+        })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_initial_image,

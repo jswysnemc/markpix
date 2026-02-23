@@ -11,7 +11,14 @@ import { CustomActionsPanel } from "./CustomActionsPanel";
 import { SettingsDialog } from "./SettingsDialog";
 import { ColorPicker } from "@/components/ui/ColorPicker";
 import { Select } from "@/components/ui/Select";
-import type { CustomAction, ImageInfo, WhiteboardConfig, WhiteboardTexture } from "@/types";
+import type {
+  Annotation,
+  CropArea,
+  CustomAction,
+  ImageInfo,
+  WhiteboardConfig,
+  WhiteboardTexture,
+} from "@/types";
 import Konva from "konva";
 import { Keyboard, Mouse, Zap, FolderOpen } from "lucide-react";
 
@@ -22,6 +29,169 @@ const MIN_WINDOW_WIDTH = 1050;
 const MIN_WINDOW_HEIGHT = 500;
 const MAX_WINDOW_WIDTH = 1920;
 const MAX_WINDOW_HEIGHT = 1080;
+
+interface AnnotationBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+function clampCropAreaToImage(area: CropArea, image: ImageInfo): CropArea | null {
+  const x = Math.max(0, Math.floor(area.x));
+  const y = Math.max(0, Math.floor(area.y));
+  const right = Math.min(image.width, Math.ceil(area.x + area.width));
+  const bottom = Math.min(image.height, Math.ceil(area.y + area.height));
+  const width = right - x;
+  const height = bottom - y;
+
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  return { x, y, width, height };
+}
+
+function getAnnotationBounds(annotation: Annotation): AnnotationBounds {
+  switch (annotation.type) {
+    case "rectangle":
+    case "blur":
+    case "image":
+      return {
+        minX: annotation.x,
+        minY: annotation.y,
+        maxX: annotation.x + annotation.width,
+        maxY: annotation.y + annotation.height,
+      };
+    case "ellipse":
+      return {
+        minX: annotation.x - annotation.radiusX,
+        minY: annotation.y - annotation.radiusY,
+        maxX: annotation.x + annotation.radiusX,
+        maxY: annotation.y + annotation.radiusY,
+      };
+    case "line":
+    case "arrow": {
+      const xs = [annotation.points[0] ?? 0, annotation.points[2] ?? 0];
+      const ys = [annotation.points[1] ?? 0, annotation.points[3] ?? 0];
+      return {
+        minX: annotation.x + Math.min(...xs),
+        minY: annotation.y + Math.min(...ys),
+        maxX: annotation.x + Math.max(...xs),
+        maxY: annotation.y + Math.max(...ys),
+      };
+    }
+    case "brush": {
+      if (annotation.points.length < 2) {
+        return {
+          minX: annotation.x,
+          minY: annotation.y,
+          maxX: annotation.x,
+          maxY: annotation.y,
+        };
+      }
+      let minPX = Infinity;
+      let maxPX = -Infinity;
+      let minPY = Infinity;
+      let maxPY = -Infinity;
+      for (let i = 0; i < annotation.points.length; i += 2) {
+        const px = annotation.points[i] ?? 0;
+        const py = annotation.points[i + 1] ?? 0;
+        minPX = Math.min(minPX, px);
+        maxPX = Math.max(maxPX, px);
+        minPY = Math.min(minPY, py);
+        maxPY = Math.max(maxPY, py);
+      }
+      return {
+        minX: annotation.x + minPX,
+        minY: annotation.y + minPY,
+        maxX: annotation.x + maxPX,
+        maxY: annotation.y + maxPY,
+      };
+    }
+    case "marker": {
+      const r = annotation.size / 2;
+      return {
+        minX: annotation.x - r,
+        minY: annotation.y - r,
+        maxX: annotation.x + r,
+        maxY: annotation.y + r,
+      };
+    }
+    case "magnifier": {
+      const targetBounds = {
+        minX: annotation.x - annotation.targetRadius,
+        minY: annotation.y - annotation.targetRadius,
+        maxX: annotation.x + annotation.targetRadius,
+        maxY: annotation.y + annotation.targetRadius,
+      };
+      const sourceBounds = {
+        minX: annotation.sourceX - annotation.sourceRadius,
+        minY: annotation.sourceY - annotation.sourceRadius,
+        maxX: annotation.sourceX + annotation.sourceRadius,
+        maxY: annotation.sourceY + annotation.sourceRadius,
+      };
+      return {
+        minX: Math.min(targetBounds.minX, sourceBounds.minX),
+        minY: Math.min(targetBounds.minY, sourceBounds.minY),
+        maxX: Math.max(targetBounds.maxX, sourceBounds.maxX),
+        maxY: Math.max(targetBounds.maxY, sourceBounds.maxY),
+      };
+    }
+    case "text": {
+      const padding = annotation.padding ?? 4;
+      const estimatedWidth =
+        annotation.width ??
+        Math.max(annotation.fontSize, annotation.text.length * annotation.fontSize * 0.6) +
+          padding * 2;
+      const estimatedHeight = annotation.fontSize * 1.4 + padding * 2;
+      return {
+        minX: annotation.x,
+        minY: annotation.y,
+        maxX: annotation.x + estimatedWidth,
+        maxY: annotation.y + estimatedHeight,
+      };
+    }
+    default: {
+      // 理论上不会走到这里，保留兜底以兼容未来新增类型
+      const base = annotation as Annotation;
+      return {
+        minX: base.x,
+        minY: base.y,
+        maxX: base.x,
+        maxY: base.y,
+      };
+    }
+  }
+}
+
+function intersectsCrop(annotation: Annotation, crop: CropArea): boolean {
+  const bounds = getAnnotationBounds(annotation);
+  return (
+    bounds.maxX > crop.x &&
+    bounds.minX < crop.x + crop.width &&
+    bounds.maxY > crop.y &&
+    bounds.minY < crop.y + crop.height
+  );
+}
+
+function shiftAnnotationAfterDirectCrop(annotation: Annotation, crop: CropArea): Annotation {
+  if (annotation.type === "magnifier") {
+    return {
+      ...annotation,
+      x: annotation.x - crop.x,
+      y: annotation.y - crop.y,
+      sourceX: annotation.sourceX - crop.x,
+      sourceY: annotation.sourceY - crop.y,
+    };
+  }
+
+  return {
+    ...annotation,
+    x: annotation.x - crop.x,
+    y: annotation.y - crop.y,
+  };
+}
 
 export function Editor() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -39,6 +209,7 @@ export function Editor() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [cliOutputPattern, setCliOutputPattern] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isFullscreenMode, setIsFullscreenMode] = useState(false);
 
   const {
     image,
@@ -93,6 +264,44 @@ export function Editor() {
     return () => {
       resizeObserver.disconnect();
       container.removeEventListener("mousemove", handleMouseMove);
+    };
+  }, []);
+
+  // 跟踪窗口全屏状态（用于全屏模式下的 UI 优化）
+  useEffect(() => {
+    let mounted = true;
+    let unlisten: (() => void) | null = null;
+    const appWindow = getCurrentWindow();
+
+    const syncFullscreenState = async () => {
+      try {
+        const fullscreen = await appWindow.isFullscreen();
+        if (mounted) {
+          setIsFullscreenMode(fullscreen);
+        }
+      } catch (error) {
+        console.error("读取全屏状态失败:", error);
+      }
+    };
+
+    void syncFullscreenState();
+
+    appWindow
+      .onResized(() => {
+        void syncFullscreenState();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((error) => {
+        console.error("监听窗口尺寸变化失败:", error);
+      });
+
+    return () => {
+      mounted = false;
+      if (unlisten) {
+        unlisten();
+      }
     };
   }, []);
 
@@ -174,6 +383,9 @@ export function Editor() {
   const adjustWindowSize = useCallback(async (imgWidth: number, imgHeight: number) => {
     try {
       const appWindow = getCurrentWindow();
+      if (await appWindow.isFullscreen()) {
+        return;
+      }
       
       // 计算理想窗口大小（图片大小 + 工具栏和边距）
       const idealWidth = imgWidth + TOOLBAR_MARGIN * 2;
@@ -192,6 +404,37 @@ export function Editor() {
       console.error("调整窗口大小失败:", error);
     }
   }, []);
+
+  // Linux/Wayland 下原生文件对话框可能被全屏窗口压住，弹框前临时退出全屏
+  const runWithNativeDialogFullscreenWorkaround = useCallback(
+    async <T,>(action: () => Promise<T>): Promise<T> => {
+      const appWindow = getCurrentWindow();
+      let shouldRestoreFullscreen = false;
+
+      try {
+        shouldRestoreFullscreen = await appWindow.isFullscreen();
+        if (shouldRestoreFullscreen) {
+          try {
+            await appWindow.setFullscreen(false);
+            await new Promise((resolve) => setTimeout(resolve, 80));
+          } catch (error) {
+            console.error("弹出系统对话框前退出全屏失败:", error);
+          }
+        }
+
+        return await action();
+      } finally {
+        if (shouldRestoreFullscreen) {
+          try {
+            await appWindow.setFullscreen(true);
+          } catch (error) {
+            console.error("系统对话框关闭后恢复全屏失败:", error);
+          }
+        }
+      }
+    },
+    []
+  );
 
   // 从路径加载图片
   const loadImageFromPath = async (path: string) => {
@@ -231,15 +474,17 @@ export function Editor() {
   // 实际执行打开文件
   const doOpenFile = async () => {
     try {
-      const selected = await open({
-        multiple: false,
-        filters: [
-          {
-            name: "图片",
-            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
-          },
-        ],
-      });
+      const selected = await runWithNativeDialogFullscreenWorkaround(() =>
+        open({
+          multiple: false,
+          filters: [
+            {
+              name: "图片",
+              extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+            },
+          ],
+        })
+      );
 
       if (selected) {
         // 清除当前状态
@@ -366,13 +611,15 @@ export function Editor() {
         .replace(/{input_file}/g, image.path || image.name || "")
         .replace(/{YYYY_MM_DD-hh-mm-ss}/g, timestamp);
 
-      const filePath = await save({
-        defaultPath: defaultName,
-        filters: [
-          { name: "PNG", extensions: ["png"] },
-          { name: "JPEG", extensions: ["jpg", "jpeg"] },
-        ],
-      });
+      const filePath = await runWithNativeDialogFullscreenWorkaround(() =>
+        save({
+          defaultPath: defaultName,
+          filters: [
+            { name: "PNG", extensions: ["png"] },
+            { name: "JPEG", extensions: ["jpg", "jpeg"] },
+          ],
+        })
+      );
 
       if (filePath) {
         await invoke("save_image_file", { path: filePath, data: dataUrl });
@@ -396,15 +643,17 @@ export function Editor() {
     if (!image) return;
     
     try {
-      const selected = await open({
-        multiple: false,
-        filters: [
-          {
-            name: "图片",
-            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
-          },
-        ],
-      });
+      const selected = await runWithNativeDialogFullscreenWorkaround(() =>
+        open({
+          multiple: false,
+          filters: [
+            {
+              name: "图片",
+              extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+            },
+          ],
+        })
+      );
 
       if (selected) {
         // 读取图片文件
@@ -620,6 +869,90 @@ export function Editor() {
     // 切换回选择工具
     setCurrentTool("select");
   }, [cropArea, setCropArea, setCropMask, setCurrentTool, pushHistory]);
+
+  // 直接应用裁剪：立刻替换背景图，并同步平移标注
+  const handleCropApplyDirect = useCallback(async () => {
+    if (!image || !cropArea) return;
+
+    const normalizedCrop = clampCropAreaToImage(cropArea, image);
+    if (!normalizedCrop || normalizedCrop.width <= 1 || normalizedCrop.height <= 1) {
+      showToast("裁剪区域无效", "error");
+      return;
+    }
+
+    const croppedSrc = await new Promise<string | null>((resolve) => {
+      const sourceImage = new window.Image();
+      sourceImage.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = normalizedCrop.width;
+        canvas.height = normalizedCrop.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+
+        ctx.drawImage(
+          sourceImage,
+          normalizedCrop.x,
+          normalizedCrop.y,
+          normalizedCrop.width,
+          normalizedCrop.height,
+          0,
+          0,
+          normalizedCrop.width,
+          normalizedCrop.height
+        );
+        resolve(canvas.toDataURL("image/png"));
+      };
+      sourceImage.onerror = () => resolve(null);
+      sourceImage.src = image.src;
+    });
+
+    if (!croppedSrc) {
+      showToast("直接裁剪失败", "error");
+      return;
+    }
+
+    const nextAnnotations = annotations
+      .filter((annotation) => intersectsCrop(annotation, normalizedCrop))
+      .map((annotation) => shiftAnnotationAfterDirectCrop(annotation, normalizedCrop));
+
+    const availableWidth = containerSize.width;
+    const availableHeight = Math.max(containerSize.height - (isFullscreenMode ? 8 : 40), 1);
+    const nextScale =
+      availableWidth > 0 && availableHeight > 0
+        ? Math.max(
+            1,
+            Math.min(availableWidth / normalizedCrop.width, availableHeight / normalizedCrop.height)
+          )
+        : 1;
+
+    useEditorStore.setState({
+      image: {
+        ...image,
+        src: croppedSrc,
+        width: normalizedCrop.width,
+        height: normalizedCrop.height,
+      },
+      annotations: nextAnnotations,
+      selectedIds: [],
+      cropArea: null,
+      cropMask: null,
+      currentTool: "select",
+      viewState: { scale: nextScale, offsetX: 0, offsetY: 0 },
+      history: [],
+      historyIndex: -1,
+      lastCopiedSnapshot: null,
+    });
+
+    const removedCount = annotations.length - nextAnnotations.length;
+    if (removedCount > 0) {
+      showToast(`已直接应用裁剪结果，移除 ${removedCount} 个超出区域标注`);
+    } else {
+      showToast("已直接应用裁剪结果");
+    }
+  }, [annotations, containerSize.height, containerSize.width, cropArea, image, isFullscreenMode, showToast]);
 
   // 从剪贴板粘贴
   const handlePaste = useCallback(async () => {
@@ -924,7 +1257,7 @@ export function Editor() {
   ];
 
   return (
-    <div className="flex flex-col w-screen h-screen bg-muted/30">
+    <div className={isFullscreenMode ? "flex h-screen w-screen flex-col bg-background" : "flex h-screen w-screen flex-col bg-muted/30"}>
       {/* 顶部工具栏 */}
       <Toolbar
         onOpenFile={handleOpenFile}
@@ -935,10 +1268,11 @@ export function Editor() {
         onClose={handleClose}
         onInsertImage={handleInsertImage}
         onOpenCustomActions={() => setShowCustomActions(!showCustomActions)}
+        isFullscreenMode={isFullscreenMode}
       />
       
       {/* 画布区域 - 顶部留出工具栏空间 */}
-      <div ref={containerRef} className="relative flex-1 overflow-hidden mt-10">
+      <div ref={containerRef} className={isFullscreenMode ? "relative mt-14 flex-1 overflow-hidden" : "relative mt-10 flex-1 overflow-hidden"}>
         {/* 拖拽提示遮罩 */}
         {isDragging && (
           <div className="absolute inset-0 z-50 bg-blue-500/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
@@ -951,7 +1285,7 @@ export function Editor() {
         {containerSize.width > 0 && containerSize.height > 0 && (
           <AnnotationCanvas
             containerWidth={containerSize.width}
-            containerHeight={containerSize.height - 40}
+            containerHeight={Math.max(containerSize.height - (isFullscreenMode ? 8 : 40), 0)}
           />
         )}
 
@@ -1020,7 +1354,9 @@ export function Editor() {
         {/* 裁剪确认面板 */}
         {cropArea && cropArea.width > 10 && cropArea.height > 10 && (
           <div 
-            className="absolute top-4 left-1/2 -translate-x-1/2 flex gap-2 p-3 rounded-lg bg-white dark:bg-gray-800 border-2 border-blue-500 shadow-xl"
+            className={`absolute left-1/2 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 p-3 rounded-lg bg-white dark:bg-gray-800 border-2 border-blue-500 shadow-xl ${
+              isFullscreenMode ? "top-2" : "top-4"
+            }`}
             style={{ zIndex: 9999 }}
           >
             <button
@@ -1031,6 +1367,15 @@ export function Editor() {
               className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors cursor-pointer"
             >
               确认裁剪
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleCropApplyDirect();
+              }}
+              className="px-4 py-2 text-sm font-medium text-white bg-emerald-500 hover:bg-emerald-600 rounded-md transition-colors cursor-pointer"
+            >
+              直接裁剪
             </button>
             <button
               onClick={(e) => {

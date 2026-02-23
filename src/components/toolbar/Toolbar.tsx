@@ -64,6 +64,7 @@ interface ToolbarProps {
   onClose: () => void;
   onInsertImage?: () => void;
   onOpenCustomActions?: () => void;
+  isFullscreenMode?: boolean;
 }
 
 export function Toolbar({
@@ -75,6 +76,7 @@ export function Toolbar({
   onClose,
   onInsertImage,
   onOpenCustomActions,
+  isFullscreenMode = false,
 }: ToolbarProps) {
   const {
     currentTool,
@@ -100,18 +102,26 @@ export function Toolbar({
   return (
     // 1. 最外层容器：仅负责定位和尺寸，没有任何事件逻辑
     <div
-      className="absolute top-0 left-0 right-0 h-10 z-50 select-none"
+      className={cn(
+        "absolute z-50 select-none",
+        isFullscreenMode ? "top-3 left-4 right-4 h-11" : "top-0 left-0 right-0 h-10"
+      )}
       data-tauri-drag-region
     >
       
       {/* 2. 拖拽层 (底层 z-0) - 独立的空 div，专门接收拖拽信号 */}
       <div 
-        className="absolute inset-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 z-0"
+        className={cn(
+          "absolute inset-0 z-0",
+          isFullscreenMode
+            ? "rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white/92 dark:bg-gray-900/88 backdrop-blur shadow-lg"
+            : "border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900"
+        )}
         data-tauri-drag-region
       />
 
       {/* 3. 交互层 (顶层 z-10) - pointer-events-none 让点击穿透到拖拽层 */}
-      <div className="absolute inset-0 flex items-center z-10 pointer-events-none">
+      <div className={cn("absolute inset-0 z-10 flex items-center pointer-events-none", isFullscreenMode && "px-1")}>
         
         {/* 文件操作 - pointer-events-auto 恢复交互 */}
         <div className="flex items-center gap-0.5 px-1 border-r border-gray-200 dark:border-gray-700 pointer-events-auto">
@@ -236,7 +246,10 @@ export function Toolbar({
               variant="ghost"
               size="icon-sm"
               onClick={onClose}
-              className="h-8 w-10 hover:bg-red-500/20 hover:text-red-500"
+              className={cn(
+                "h-8 w-10 hover:bg-red-500/20 hover:text-red-500",
+                isFullscreenMode && "rounded-r-lg"
+              )}
             >
               <X size={18} />
             </Button>
