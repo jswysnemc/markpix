@@ -1,6 +1,6 @@
 [package]
 name = "markpix"
-version = "0.5.2"
+version = "0.5.3"
 description = "一个现代化的图片标注工具"
 authors = ["snemc"]
 edition = "2021"
@@ -32,4 +32,3 @@ image = "0.25"
 dirs = "6"
 toml = "0.8"
 tempfile = "3"
-
