@@ -52,6 +52,36 @@ const defaultWhiteboardConfig: WhiteboardConfig = {
   texture: "none",
 };
 
+const TEXT_TOOL_CONFIG_KEYS: Array<keyof ToolConfig> = [
+  "strokeColor",
+  "fontSize",
+  "fontFamily",
+  "textBackgroundColor",
+  "textStyle",
+  "bubbleStroke",
+  "bubbleFill",
+  "bubbleTailPosition",
+];
+
+function hasTextToolConfigPatch(config: Partial<ToolConfig>): boolean {
+  return Object.keys(config).some((key) =>
+    TEXT_TOOL_CONFIG_KEYS.includes(key as keyof ToolConfig)
+  );
+}
+
+function serializeTextToolConfig(toolConfig: ToolConfig) {
+  return {
+    stroke_color: toolConfig.strokeColor,
+    font_size: toolConfig.fontSize,
+    font_family: toolConfig.fontFamily,
+    text_background_color: toolConfig.textBackgroundColor,
+    text_style: toolConfig.textStyle,
+    bubble_stroke: toolConfig.bubbleStroke,
+    bubble_fill: toolConfig.bubbleFill,
+    bubble_tail_position: toolConfig.bubbleTailPosition,
+  };
+}
+
 /**
  * 历史记录最大长度
  */
@@ -181,10 +211,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   // 工具配置
   toolConfig: defaultToolConfig,
-  setToolConfig: (config) =>
+  setToolConfig: (config) => {
+    const hasTextPatch = hasTextToolConfigPatch(config);
+    const patchKeys = Object.keys(config) as Array<keyof ToolConfig>;
+    const isOnlyStrokeColorPatch = patchKeys.length === 1 && patchKeys[0] === "strokeColor";
     set((state) => ({
       toolConfig: { ...state.toolConfig, ...config },
-    })),
+    }));
+    const shouldPersistTextConfig =
+      hasTextPatch && (!isOnlyStrokeColorPatch || get().currentTool === "text");
+    if (shouldPersistTextConfig) {
+      get().saveConfig();
+    }
+  },
 
   // 标注对象
   annotations: [],
@@ -402,10 +441,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   loadConfig: async () => {
     try {
       const config = await invoke<AppConfig>("get_config");
+      const currentToolConfig = get().toolConfig;
+      const persistedTextToolConfig = config.text_tool_config;
       set({ 
         theme: config.theme, 
         outputPattern: config.output_pattern,
-        customActions: config.custom_actions 
+        customActions: config.custom_actions,
+        toolConfig: {
+          ...currentToolConfig,
+          ...(persistedTextToolConfig?.stroke_color !== undefined
+            ? { strokeColor: persistedTextToolConfig.stroke_color }
+            : {}),
+          ...(persistedTextToolConfig?.font_size !== undefined
+            ? { fontSize: persistedTextToolConfig.font_size }
+            : {}),
+          ...(persistedTextToolConfig?.font_family !== undefined
+            ? { fontFamily: persistedTextToolConfig.font_family }
+            : {}),
+          ...(persistedTextToolConfig?.text_background_color !== undefined
+            ? { textBackgroundColor: persistedTextToolConfig.text_background_color }
+            : {}),
+          ...(persistedTextToolConfig?.text_style !== undefined
+            ? { textStyle: persistedTextToolConfig.text_style }
+            : {}),
+          ...(persistedTextToolConfig?.bubble_stroke !== undefined
+            ? { bubbleStroke: persistedTextToolConfig.bubble_stroke }
+            : {}),
+          ...(persistedTextToolConfig?.bubble_fill !== undefined
+            ? { bubbleFill: persistedTextToolConfig.bubble_fill }
+            : {}),
+          ...(persistedTextToolConfig?.bubble_tail_position !== undefined
+            ? { bubbleTailPosition: persistedTextToolConfig.bubble_tail_position }
+            : {}),
+        },
       });
       
       // 应用加载的主题（但不触发 saveConfig）
@@ -430,13 +498,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   saveConfig: async () => {
-    const { theme, outputPattern, customActions } = get();
+    const { theme, outputPattern, customActions, toolConfig } = get();
     try {
       await invoke("save_config", {
         config: {
           theme,
           output_pattern: outputPattern,
           custom_actions: customActions,
+          text_tool_config: serializeTextToolConfig(toolConfig),
         }
       });
     } catch (error) {

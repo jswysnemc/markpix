@@ -29,6 +29,43 @@ pub struct CustomAction {
     pub icon: Option<String>,
 }
 
+/// 文本工具默认配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TextToolConfig {
+    /// 文字颜色（对应前端 strokeColor）
+    pub stroke_color: String,
+    /// 字号
+    pub font_size: u32,
+    /// 字体族
+    pub font_family: String,
+    /// 文字样式：normal 或 bubble
+    pub text_style: String,
+    /// 文本背景色
+    pub text_background_color: String,
+    /// 气泡边框色
+    pub bubble_stroke: String,
+    /// 气泡背景色
+    pub bubble_fill: String,
+    /// 气泡尾巴位置：left 或 right
+    pub bubble_tail_position: String,
+}
+
+impl Default for TextToolConfig {
+    fn default() -> Self {
+        Self {
+            stroke_color: "#ef4444".to_string(),
+            font_size: 18,
+            font_family: "system-ui".to_string(),
+            text_style: "normal".to_string(),
+            text_background_color: "transparent".to_string(),
+            bubble_stroke: "".to_string(),
+            bubble_fill: "transparent".to_string(),
+            bubble_tail_position: "left".to_string(),
+        }
+    }
+}
+
 /// 应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -39,6 +76,8 @@ pub struct AppConfig {
     pub output_pattern: String,
     /// 自定义动作列表
     pub custom_actions: Vec<CustomAction>,
+    /// 文本工具配置
+    pub text_tool_config: TextToolConfig,
 }
 
 impl Default for AppConfig {
@@ -47,6 +86,7 @@ impl Default for AppConfig {
             theme: "auto".to_string(),
             output_pattern: "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png".to_string(),
             custom_actions: vec![],
+            text_tool_config: TextToolConfig::default(),
         }
     }
 }

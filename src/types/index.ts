@@ -344,4 +344,14 @@ export interface AppConfig {
   theme: ThemeMode;
   output_pattern: string;
   custom_actions: CustomAction[];
+  text_tool_config?: {
+    stroke_color?: string;
+    font_size?: number;
+    font_family?: string;
+    text_style?: TextStyle;
+    text_background_color?: string;
+    bubble_stroke?: string;
+    bubble_fill?: string;
+    bubble_tail_position?: BubbleTailPosition;
+  };
 }

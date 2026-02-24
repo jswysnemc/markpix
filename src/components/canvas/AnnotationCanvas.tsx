@@ -746,7 +746,62 @@ export function AnnotationCanvas({
   const handleWheel = useCallback(
     (e: Konva.KonvaEventObject<WheelEvent>) => {
       e.evt.preventDefault();
-      const delta = e.evt.deltaY > 0 ? -1 : 1;
+
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      const pointer = stage.getPointerPosition();
+      if (!pointer) return;
+
+      const oldScale = viewState.scale;
+      const wheel = e.evt;
+      const isPixelDelta = wheel.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
+      const absDeltaX = Math.abs(wheel.deltaX);
+      const absDeltaY = Math.abs(wheel.deltaY);
+
+      // 触摸板两指滚动（非捏合）优先解释为平移，避免误触发缩放
+      const isLikelyTrackpadScroll =
+        isPixelDelta &&
+        !wheel.ctrlKey &&
+        !wheel.metaKey &&
+        (absDeltaX > 0 || (absDeltaY > 0 && absDeltaY < 50));
+
+      // 触摸板捏合通常表现为 ctrl/meta + wheel
+      const isPinchZoom = wheel.ctrlKey || wheel.metaKey;
+
+      const zoomAtPointer = (nextScale: number) => {
+        const clampedScale = clamp(nextScale, 0.1, 10);
+        const { x, y } = getImageFit();
+        const mousePointTo = {
+          x: (pointer.x - x - viewState.offsetX) / oldScale,
+          y: (pointer.y - y - viewState.offsetY) / oldScale,
+        };
+
+        const newOffsetX = pointer.x - x - mousePointTo.x * clampedScale;
+        const newOffsetY = pointer.y - y - mousePointTo.y * clampedScale;
+
+        setViewState({
+          scale: clampedScale,
+          offsetX: newOffsetX,
+          offsetY: newOffsetY,
+        });
+      };
+
+      if (isPinchZoom) {
+        const pinchFactor = Math.exp(-wheel.deltaY * 0.0035);
+        zoomAtPointer(oldScale * pinchFactor);
+        return;
+      }
+
+      if (isLikelyTrackpadScroll) {
+        setViewState({
+          offsetX: viewState.offsetX - wheel.deltaX,
+          offsetY: viewState.offsetY - wheel.deltaY,
+        });
+        return;
+      }
+
+      const delta = wheel.deltaY > 0 ? -1 : 1;
 
       // 如果有选中的标注，根据标注类型调节对应属性
       if (selectedIds.length > 0 && currentTool !== "pan") {
@@ -855,38 +910,11 @@ export function AnnotationCanvas({
         if (adjusted) return;
       }
 
-      // 默认：缩放画布
-      const stage = stageRef.current;
-      if (!stage) return;
-
-      const oldScale = viewState.scale;
-      const pointer = stage.getPointerPosition();
-      if (!pointer) return;
-
-      // 计算新缩放
-      const scaleBy = 1.1;
-      const newScale =
-        e.evt.deltaY < 0
-          ? Math.max(oldScale * scaleBy, 0.1)
-          : Math.max(oldScale / scaleBy, 0.1);
-
-      // 以鼠标位置为中心缩放
-      const { x, y } = getImageFit();
-      const mousePointTo = {
-        x: (pointer.x - x - viewState.offsetX) / oldScale,
-        y: (pointer.y - y - viewState.offsetY) / oldScale,
-      };
-
-      const newOffsetX = pointer.x - x - mousePointTo.x * newScale;
-      const newOffsetY = pointer.y - y - mousePointTo.y * newScale;
-
-      setViewState({
-        scale: newScale,
-        offsetX: newOffsetX,
-        offsetY: newOffsetY,
-      });
+      // 传统鼠标滚轮：按固定步长缩放
+      const scaleBy = wheel.deltaY < 0 ? 1.1 : 1 / 1.1;
+      zoomAtPointer(oldScale * scaleBy);
     },
-    [viewState, setViewState, getImageFit, currentTool, selectedIds, toolConfig, setToolConfig, annotations, updateAnnotation]
+    [viewState, setViewState, getImageFit, currentTool, selectedIds, setToolConfig, annotations, updateAnnotation]
   );
 
   // 平移状态
