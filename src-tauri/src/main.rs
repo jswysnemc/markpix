@@ -12,7 +12,7 @@ use std::io::{self, Read};
 #[derive(Parser, Debug)]
 #[command(name = "markpix")]
 #[command(author = "snemc")]
-#[command(version = "0.5.3")]
+#[command(version = "0.5.4")]
 #[command(about = "一个现代化的图片标注工具", long_about = None)]
 struct Args {
     /// 要打开的图片文件路径（位置参数）

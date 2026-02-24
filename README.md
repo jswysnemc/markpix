@@ -20,9 +20,11 @@
 - **实时属性编辑** - 选中标注后可实时修改颜色、粗细等属性
 - **撤销/重做** - 支持历史记录
 - **裁剪双模式** - 可保留裁剪蒙版（绿框参照）或直接应用裁剪结果为新背景
+- **文字工具配置持久化** - 字体、字号、颜色、气泡样式等可跨会话保留
 - **复制到剪贴板** - 一键复制标注后的图片
 - **保存图片** - 导出为 PNG 格式
 - **缩放/平移** - 自由查看图片, 使用鼠标中键拖拽平移，鼠标滚轮缩放大小
+- **触摸板缩放优化** - 双指滚动用于平移，捏合手势用于缩放（支持的系统/WebView 环境下）
 
 ### 自定义功能
 - **自定义动作** - 支持配置外部命令（如 OCR、上传图床等），可在设置界面图形化管理
@@ -122,6 +124,16 @@ theme = "auto"
 # 输出文件名模板
 # 可用变量: {input_file_base}, {input_file}, {YYYY_MM_DD-hh-mm-ss}
 output_pattern = "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png"
+
+# 文本工具默认配置（可选）
+[text_tool_config]
+stroke_color = "#ef4444"
+font_size = 18
+font_family = "system-ui"
+text_style = "normal" # normal / bubble
+bubble_stroke = ""
+bubble_fill = "transparent"
+bubble_tail_position = "left" # left / right
 
 # 自定义动作
 [[custom_actions]]
