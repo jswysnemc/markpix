@@ -275,12 +275,12 @@ export function Editor() {
 
     const syncFullscreenState = async () => {
       try {
-        const fullscreen = await appWindow.isFullscreen();
+        const maximized = await appWindow.isMaximized();
         if (mounted) {
-          setIsFullscreenMode(fullscreen);
+          setIsFullscreenMode(maximized);
         }
       } catch (error) {
-        console.error("读取全屏状态失败:", error);
+        console.error("读取最大化状态失败:", error);
       }
     };
 
@@ -383,7 +383,7 @@ export function Editor() {
   const adjustWindowSize = useCallback(async (imgWidth: number, imgHeight: number) => {
     try {
       const appWindow = getCurrentWindow();
-      if (await appWindow.isFullscreen()) {
+      if (await appWindow.isMaximized()) {
         return;
       }
       
@@ -404,37 +404,6 @@ export function Editor() {
       console.error("调整窗口大小失败:", error);
     }
   }, []);
-
-  // Linux/Wayland 下原生文件对话框可能被全屏窗口压住，弹框前临时退出全屏
-  const runWithNativeDialogFullscreenWorkaround = useCallback(
-    async <T,>(action: () => Promise<T>): Promise<T> => {
-      const appWindow = getCurrentWindow();
-      let shouldRestoreFullscreen = false;
-
-      try {
-        shouldRestoreFullscreen = await appWindow.isFullscreen();
-        if (shouldRestoreFullscreen) {
-          try {
-            await appWindow.setFullscreen(false);
-            await new Promise((resolve) => setTimeout(resolve, 80));
-          } catch (error) {
-            console.error("弹出系统对话框前退出全屏失败:", error);
-          }
-        }
-
-        return await action();
-      } finally {
-        if (shouldRestoreFullscreen) {
-          try {
-            await appWindow.setFullscreen(true);
-          } catch (error) {
-            console.error("系统对话框关闭后恢复全屏失败:", error);
-          }
-        }
-      }
-    },
-    []
-  );
 
   // 从路径加载图片
   const loadImageFromPath = async (path: string) => {
@@ -474,17 +443,15 @@ export function Editor() {
   // 实际执行打开文件
   const doOpenFile = async () => {
     try {
-      const selected = await runWithNativeDialogFullscreenWorkaround(() =>
-        open({
-          multiple: false,
-          filters: [
-            {
-              name: "图片",
-              extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
-            },
-          ],
-        })
-      );
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "图片",
+            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+          },
+        ],
+      });
 
       if (selected) {
         // 清除当前状态
@@ -611,15 +578,13 @@ export function Editor() {
         .replace(/{input_file}/g, image.path || image.name || "")
         .replace(/{YYYY_MM_DD-hh-mm-ss}/g, timestamp);
 
-      const filePath = await runWithNativeDialogFullscreenWorkaround(() =>
-        save({
-          defaultPath: defaultName,
-          filters: [
-            { name: "PNG", extensions: ["png"] },
-            { name: "JPEG", extensions: ["jpg", "jpeg"] },
-          ],
-        })
-      );
+      const filePath = await save({
+        defaultPath: defaultName,
+        filters: [
+          { name: "PNG", extensions: ["png"] },
+          { name: "JPEG", extensions: ["jpg", "jpeg"] },
+        ],
+      });
 
       if (filePath) {
         await invoke("save_image_file", { path: filePath, data: dataUrl });
@@ -643,17 +608,15 @@ export function Editor() {
     if (!image) return;
     
     try {
-      const selected = await runWithNativeDialogFullscreenWorkaround(() =>
-        open({
-          multiple: false,
-          filters: [
-            {
-              name: "图片",
-              extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
-            },
-          ],
-        })
-      );
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "图片",
+            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+          },
+        ],
+      });
 
       if (selected) {
         // 读取图片文件
@@ -918,15 +881,20 @@ export function Editor() {
       .filter((annotation) => intersectsCrop(annotation, normalizedCrop))
       .map((annotation) => shiftAnnotationAfterDirectCrop(annotation, normalizedCrop));
 
-    const availableWidth = containerSize.width;
+    // getImageFit caps scale at 1, so for small images we boost viewState.scale
+    const availableWidth = Math.max(containerSize.width, 1);
     const availableHeight = Math.max(containerSize.height - (isFullscreenMode ? 8 : 40), 1);
-    const nextScale =
-      availableWidth > 0 && availableHeight > 0
-        ? Math.max(
-            1,
-            Math.min(availableWidth / normalizedCrop.width, availableHeight / normalizedCrop.height)
-          )
-        : 1;
+    const naturalFit = Math.min(
+      availableWidth / normalizedCrop.width,
+      availableHeight / normalizedCrop.height
+    );
+    // fitScale (capped at 1) is what getImageFit will compute
+    const fitScale = Math.min(naturalFit, 1);
+    // viewState.scale compensates so total display = naturalFit
+    const nextScale = naturalFit / fitScale;
+    // offset to keep image centered when viewState.scale != 1
+    const nextOffsetX = normalizedCrop.width * fitScale * (1 - nextScale) / 2;
+    const nextOffsetY = normalizedCrop.height * fitScale * (1 - nextScale) / 2;
 
     useEditorStore.setState({
       image: {
@@ -940,7 +908,7 @@ export function Editor() {
       cropArea: null,
       cropMask: null,
       currentTool: "select",
-      viewState: { scale: nextScale, offsetX: 0, offsetY: 0 },
+      viewState: { scale: nextScale, offsetX: nextOffsetX, offsetY: nextOffsetY },
       history: [],
       historyIndex: -1,
       lastCopiedSnapshot: null,

@@ -644,14 +644,14 @@ pub fn run_with_args(
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
-            if fullscreen {
-                if let Some(window) = app.get_webview_window("main") {
-                    if let Err(err) = window.set_fullscreen(true) {
-                        eprintln!("设置全屏模式失败: {}", err);
+            if let Some(window) = app.get_webview_window("main") {
+                if fullscreen {
+                    if let Err(err) = window.maximize() {
+                        eprintln!("设置最大化模式失败: {}", err);
                     }
-                } else {
-                    eprintln!("警告: 未找到主窗口，无法应用全屏模式");
                 }
+            } else {
+                eprintln!("警告: 未找到主窗口");
             }
             Ok(())
         })

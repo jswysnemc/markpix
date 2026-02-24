@@ -15,7 +15,7 @@ interface SelectedAnnotationConfigProps {
 }
 
 export function SelectedAnnotationConfig({ orientation, compact = false }: SelectedAnnotationConfigProps) {
-  const { selectedIds, annotations, updateAnnotations, pushHistory, systemFonts } = useEditorStore();
+  const { selectedIds, annotations, updateAnnotations, pushHistory, systemFonts, setToolConfig } = useEditorStore();
 
   const isHorizontal = orientation === "horizontal";
   const isCompact = compact;
@@ -240,7 +240,11 @@ export function SelectedAnnotationConfig({ orientation, compact = false }: Selec
                 <input
                   ref={fontInputRef}
                   value={text.fontFamily}
-                  onChange={(e) => updateAnnotations(selectedIds, { fontFamily: e.target.value })}
+                  onChange={(e) => {
+                    const fontFamily = e.target.value;
+                    updateAnnotations(selectedIds, { fontFamily });
+                    setToolConfig({ fontFamily });
+                  }}
                   onBlur={() => pushHistory()}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
@@ -261,6 +265,7 @@ export function SelectedAnnotationConfig({ orientation, compact = false }: Selec
                     const input = fontInputRef.current;
                     if (!input) return;
                     updateAnnotations(selectedIds, { fontFamily: "" });
+                    setToolConfig({ fontFamily: "" });
                     pushHistory();
                     requestAnimationFrame(() => {
                       input.focus();

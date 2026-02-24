@@ -70,7 +70,7 @@ export function AnnotationCanvas({
   
   // 用于 requestAnimationFrame 节流
   const rafRef = useRef<number | null>(null);
-  
+
   // 删除按钮位置（基于选中标注的边界框）
   const [deleteButtonPos, setDeleteButtonPos] = useState<{ x: number; y: number } | null>(null);
   const [deleteButtonHover, setDeleteButtonHover] = useState(false);
@@ -490,10 +490,11 @@ export function AnnotationCanvas({
 
       const dx = pos.x - lastPanPosRef.current.x;
       const dy = pos.y - lastPanPosRef.current.y;
+      const latestViewState = useEditorStore.getState().viewState;
 
       setViewState({
-        offsetX: viewState.offsetX + dx,
-        offsetY: viewState.offsetY + dy,
+        offsetX: latestViewState.offsetX + dx,
+        offsetY: latestViewState.offsetY + dy,
       });
 
       lastPanPosRef.current = pos;
@@ -582,7 +583,7 @@ export function AnnotationCanvas({
         });
         break;
     }
-  }, [isDrawing, drawingAnnotation, getPointerPosition, currentTool, viewState.offsetX, viewState.offsetY, setViewState, setCropArea]);
+  }, [isDrawing, drawingAnnotation, getPointerPosition, currentTool, setViewState, setCropArea, magnifierPos]);
 
   // 使用 requestAnimationFrame 节流的鼠标移动处理
   const handleMouseMove = useCallback(() => {
@@ -743,63 +744,34 @@ export function AnnotationCanvas({
   }, [isDrawing, drawingAnnotation, addAnnotation, setIsDrawing, isCropping, currentTool, cropArea, setIsCropping, setCropArea, selectionRect, annotations, selectedIds, setSelectedIds]);
 
   // 处理滚轮：根据选中标注类型调节属性，或缩放画布
-  const handleWheel = useCallback(
-    (e: Konva.KonvaEventObject<WheelEvent>) => {
-      e.evt.preventDefault();
-
+  const handleCanvasWheel = useCallback(
+    (wheel: WheelEvent) => {
       const stage = stageRef.current;
       if (!stage) return;
 
+      if (wheel.cancelable) wheel.preventDefault();
+      wheel.stopPropagation();
+
+      stage.setPointersPositions(wheel);
       const pointer = stage.getPointerPosition();
       if (!pointer) return;
 
-      const oldScale = viewState.scale;
-      const wheel = e.evt;
-      const isPixelDelta = wheel.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
-      const absDeltaX = Math.abs(wheel.deltaX);
-      const absDeltaY = Math.abs(wheel.deltaY);
-
-      // 触摸板两指滚动（非捏合）优先解释为平移，避免误触发缩放
-      const isLikelyTrackpadScroll =
-        isPixelDelta &&
-        !wheel.ctrlKey &&
-        !wheel.metaKey &&
-        (absDeltaX > 0 || (absDeltaY > 0 && absDeltaY < 50));
-
-      // 触摸板捏合通常表现为 ctrl/meta + wheel
-      const isPinchZoom = wheel.ctrlKey || wheel.metaKey;
+      const latestViewState = useEditorStore.getState().viewState;
+      const oldScale = latestViewState.scale;
 
       const zoomAtPointer = (nextScale: number) => {
-        const clampedScale = clamp(nextScale, 0.1, 10);
+        const clampedScale = clamp(nextScale, 0.1, 100);
         const { x, y } = getImageFit();
         const mousePointTo = {
-          x: (pointer.x - x - viewState.offsetX) / oldScale,
-          y: (pointer.y - y - viewState.offsetY) / oldScale,
+          x: (pointer.x - x - latestViewState.offsetX) / oldScale,
+          y: (pointer.y - y - latestViewState.offsetY) / oldScale,
         };
-
-        const newOffsetX = pointer.x - x - mousePointTo.x * clampedScale;
-        const newOffsetY = pointer.y - y - mousePointTo.y * clampedScale;
-
         setViewState({
           scale: clampedScale,
-          offsetX: newOffsetX,
-          offsetY: newOffsetY,
+          offsetX: pointer.x - x - mousePointTo.x * clampedScale,
+          offsetY: pointer.y - y - mousePointTo.y * clampedScale,
         });
       };
-
-      if (isPinchZoom) {
-        const pinchFactor = Math.exp(-wheel.deltaY * 0.0035);
-        zoomAtPointer(oldScale * pinchFactor);
-        return;
-      }
-
-      if (isLikelyTrackpadScroll) {
-        setViewState({
-          offsetX: viewState.offsetX - wheel.deltaX,
-          offsetY: viewState.offsetY - wheel.deltaY,
-        });
-        return;
-      }
 
       const delta = wheel.deltaY > 0 ? -1 : 1;
 
@@ -907,15 +879,26 @@ export function AnnotationCanvas({
           }
         }
 
-        if (adjusted) return;
+        if (adjusted) {
+          return;
+        }
       }
 
       // 传统鼠标滚轮：按固定步长缩放
       const scaleBy = wheel.deltaY < 0 ? 1.1 : 1 / 1.1;
       zoomAtPointer(oldScale * scaleBy);
     },
-    [viewState, setViewState, getImageFit, currentTool, selectedIds, setToolConfig, annotations, updateAnnotation]
+    [setViewState, getImageFit, currentTool, selectedIds, setToolConfig, annotations, updateAnnotation]
   );
+
+  // 使用原生 wheel 监听（passive: false），避免 Konva/React 被动监听问题
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const container = stage.container();
+    container.addEventListener("wheel", handleCanvasWheel, { passive: false, capture: true });
+    return () => container.removeEventListener("wheel", handleCanvasWheel, true);
+  }, [handleCanvasWheel]);
 
   // 平移状态
   const isPanningRef = useRef(false);
@@ -1058,7 +1041,6 @@ export function AnnotationCanvas({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onWheel={handleWheel}
         onContextMenu={handleContextMenu}
         style={{ cursor: getCursor() }}
         perfectDrawEnabled={false}

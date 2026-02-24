@@ -2,6 +2,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { generateId } from "@/lib/utils";
+
 import type {
   Annotation,
   ToolType,
@@ -220,7 +221,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
     const shouldPersistTextConfig =
       hasTextPatch && (!isOnlyStrokeColorPatch || get().currentTool === "text");
-    if (shouldPersistTextConfig) {
+    // Don't persist when fontFamily is cleared (dropdown open action)
+    if (shouldPersistTextConfig && config.fontFamily !== "") {
       get().saveConfig();
     }
   },

@@ -32,7 +32,7 @@ struct Args {
     #[arg(short = 'o', long = "output-filename")]
     output_filename: Option<String>,
 
-    /// 启动时进入全屏模式
+    /// 启动时最大化窗口
     #[arg(long = "fullscreen")]
     fullscreen: bool,
 }
