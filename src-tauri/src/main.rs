@@ -5,8 +5,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use clap::Parser;
-use std::path::PathBuf;
 use std::io::{self, Read};
+use std::path::PathBuf;
 
 /// MarkPix - 图片标注工具
 #[derive(Parser, Debug)]
@@ -50,9 +50,8 @@ fn main() {
             resolve_path(filename)
         }
     } else {
-        args.image_path.and_then(|path| {
-            path.to_str().and_then(|s| resolve_path(s))
-        })
+        args.image_path
+            .and_then(|path| path.to_str().and_then(|s| resolve_path(s)))
     };
 
     // 处理配置文件路径
@@ -91,13 +90,13 @@ fn read_image_from_stdin() -> Option<String> {
         // 保存到临时文件
         let temp_dir = std::env::temp_dir().join("markpix");
         std::fs::create_dir_all(&temp_dir).ok()?;
-        
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
         let temp_path = temp_dir.join(format!("stdin-{}.png", timestamp));
-        
+
         std::fs::write(&temp_path, buffer).ok()?;
         temp_path.to_str().map(|s| s.to_string())
     } else {

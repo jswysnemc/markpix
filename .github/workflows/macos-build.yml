@@ -1,0 +1,54 @@
+name: Build macOS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: macOS Apple Silicon
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Apple Silicon app
+        run: npm run tauri build -- --target aarch64-apple-darwin
+
+      - name: Verify binary architecture
+        run: |
+          lipo -info src-tauri/target/aarch64-apple-darwin/release/markpix
+          lipo -info src-tauri/target/aarch64-apple-darwin/release/bundle/macos/MarkPix.app/Contents/MacOS/markpix
+
+      - name: Upload dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarkPix-macOS-arm64
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 30

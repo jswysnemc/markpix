@@ -7,7 +7,14 @@ import { ColorPicker } from "@/components/ui/ColorPicker";
 import { Slider } from "@/components/ui/Slider";
 import { Select } from "@/components/ui/Select";
 import { ChevronDown } from "lucide-react";
-import type { Annotation } from "@/types";
+import type {
+  Annotation,
+  BalloonShape,
+  CadTermination,
+  DimMode,
+  DimTextPosition,
+  RadialKind,
+} from "@/types";
 
 interface SelectedAnnotationConfigProps {
   orientation: "horizontal" | "vertical";
@@ -49,6 +56,86 @@ export function SelectedAnnotationConfig({ orientation, compact = false }: Selec
     updateAnnotations(selectedIds, updates);
     pushHistory();
   };
+
+  // ========== CAD 标注属性项 ==========
+  const cadInputClass = cn(
+    "rounded-md border border-input bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-ring",
+    isCompact ? "w-20 px-1.5 py-0.5 text-xs" : "w-28 px-2 py-1 text-sm"
+  );
+
+  // 数值/文字输入项（尺寸值、角度值、引线注释均为手工输入）
+  const textFieldItem = (
+    label: string,
+    field: "text" | "value",
+    value: string,
+    placeholder: string
+  ) => (
+    <ConfigItem label={label} isHorizontal={isHorizontal} isCompact={isCompact}>
+      <input
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) =>
+          updateAnnotations(
+            selectedIds,
+            { [field]: e.target.value } as unknown as Partial<Annotation>
+          )
+        }
+        onBlur={() => pushHistory()}
+        className={cadInputClass}
+      />
+    </ConfigItem>
+  );
+
+  const cadColorItem = (stroke: string) => (
+    <ConfigItem label="颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
+      <ColorPicker
+        value={stroke}
+        onChange={(color) => updateSelectedAnnotations({ stroke: color })}
+      />
+    </ConfigItem>
+  );
+
+  const cadWidthItem = (width: number) => (
+    <ConfigItem label="线宽" isHorizontal={isHorizontal} isCompact={isCompact}>
+      <Slider
+        value={width}
+        onChange={(v) => updateSelectedAnnotations({ strokeWidth: v })}
+        min={0.6}
+        max={6}
+        step={0.2}
+        className={sliderClass}
+      />
+    </ConfigItem>
+  );
+
+  const cadFontItem = (size: number) => (
+    <ConfigItem label="字号" isHorizontal={isHorizontal} isCompact={isCompact}>
+      <Slider
+        value={size}
+        onChange={(v) => updateSelectedAnnotations({ fontSize: v })}
+        min={10}
+        max={48}
+        className={sliderClass}
+      />
+    </ConfigItem>
+  );
+
+  const cadTermItem = (termination: CadTermination) => (
+    <ConfigItem label="端点符号" isHorizontal={isHorizontal} isCompact={isCompact}>
+      <Select
+        value={termination}
+        onChange={(v) =>
+          updateSelectedAnnotations({ termination: v as CadTermination })
+        }
+        options={[
+          { value: "arrow", label: "实心箭头 (ASME)" },
+          { value: "slash", label: "45°斜线 (ISO)" },
+          { value: "dot", label: "圆点" },
+        ]}
+      />
+    </ConfigItem>
+  );
 
   // 根据标注类型渲染不同的配置
   const renderConfig = () => {
@@ -391,6 +478,59 @@ export function SelectedAnnotationConfig({ orientation, compact = false }: Selec
         );
       }
 
+      case "callout": {
+        const callout = firstAnnotation as Extract<Annotation, { type: "callout" }>;
+        return (
+          <>
+            <ConfigItem label="颜色" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <ColorPicker
+                value={callout.fill}
+                onChange={(color) => updateSelectedAnnotations({ fill: color, textColor: "#fff" })}
+              />
+            </ConfigItem>
+            <ConfigItem label="序号大小" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Slider
+                value={callout.size}
+                onChange={(v) => updateSelectedAnnotations({ size: v })}
+                min={20}
+                max={60}
+                className={sliderClass}
+              />
+            </ConfigItem>
+            <ConfigItem label="线条粗细" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Slider
+                value={callout.strokeWidth}
+                onChange={(v) => updateSelectedAnnotations({ strokeWidth: v })}
+                min={1}
+                max={20}
+                className={sliderClass}
+                previewColor={callout.fill}
+              />
+            </ConfigItem>
+            <ConfigItem label="样式" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Select
+                value={callout.markerStyle}
+                onChange={(v) => updateSelectedAnnotations({ markerStyle: v as "filled" | "outlined" })}
+                options={[
+                  { value: "filled", label: "实心" },
+                  { value: "outlined", label: "空心" },
+                ]}
+              />
+            </ConfigItem>
+            <ConfigItem label="箭头样式" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Select
+                value={callout.arrowStyle}
+                onChange={(v) => updateSelectedAnnotations({ arrowStyle: v as "normal" | "filled" })}
+                options={[
+                  { value: "filled", label: "QQ风格" },
+                  { value: "normal", label: "普通" },
+                ]}
+              />
+            </ConfigItem>
+          </>
+        );
+      }
+
       case "blur": {
         const blur = firstAnnotation as Extract<Annotation, { type: "blur" }>;
         return (
@@ -424,6 +564,208 @@ export function SelectedAnnotationConfig({ orientation, compact = false }: Selec
             图片贴图：可拖动调整位置和大小
           </div>
         );
+
+      case "dim_linear": {
+        const dim = firstAnnotation as Extract<
+          Annotation,
+          { type: "dim_linear" }
+        >;
+        return (
+          <>
+            {textFieldItem("尺寸值", "text", dim.text, "如 12.5")}
+            {cadColorItem(dim.stroke)}
+            {cadWidthItem(dim.strokeWidth)}
+            {cadFontItem(dim.fontSize)}
+            <ConfigItem label="测量方式" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Select
+                value={dim.mode}
+                onChange={(v) => updateSelectedAnnotations({ mode: v as DimMode })}
+                options={[
+                  { value: "aligned", label: "对齐" },
+                  { value: "horizontal", label: "水平" },
+                  { value: "vertical", label: "垂直" },
+                ]}
+              />
+            </ConfigItem>
+            {cadTermItem(dim.termination)}
+            <ConfigItem label="文字位置" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Select
+                value={dim.textPosition}
+                onChange={(v) =>
+                  updateSelectedAnnotations({ textPosition: v as DimTextPosition })
+                }
+                options={[
+                  { value: "above", label: "线上方 (ASME)" },
+                  { value: "inline", label: "居中打断 (ISO)" },
+                ]}
+              />
+            </ConfigItem>
+            <ConfigItem label="尺寸界线" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Select
+                value={dim.showExtension ? "on" : "off"}
+                onChange={(v) =>
+                  updateSelectedAnnotations({ showExtension: v === "on" })
+                }
+                options={[
+                  { value: "on", label: "显示" },
+                  { value: "off", label: "隐藏" },
+                ]}
+              />
+            </ConfigItem>
+          </>
+        );
+      }
+
+      case "dim_angular": {
+        const dim = firstAnnotation as Extract<
+          Annotation,
+          { type: "dim_angular" }
+        >;
+        return (
+          <>
+            {textFieldItem("角度值", "text", dim.text, "如 45°")}
+            {cadColorItem(dim.stroke)}
+            {cadWidthItem(dim.strokeWidth)}
+            {cadFontItem(dim.fontSize)}
+            <ConfigItem label="弧半径" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Slider
+                value={dim.arcRadius}
+                onChange={(v) => updateSelectedAnnotations({ arcRadius: v })}
+                min={16}
+                max={200}
+                className={sliderClass}
+              />
+            </ConfigItem>
+          </>
+        );
+      }
+
+      case "dim_radial": {
+        const dim = firstAnnotation as Extract<
+          Annotation,
+          { type: "dim_radial" }
+        >;
+        return (
+          <>
+            {textFieldItem(
+              dim.kind === "diameter" ? "直径" : "半径",
+              "text",
+              dim.text,
+              "数值"
+            )}
+            {cadColorItem(dim.stroke)}
+            {cadWidthItem(dim.strokeWidth)}
+            {cadFontItem(dim.fontSize)}
+            <ConfigItem label="类型" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Select
+                value={dim.kind}
+                onChange={(v) => updateSelectedAnnotations({ kind: v as RadialKind })}
+                options={[
+                  { value: "radius", label: "半径 R" },
+                  { value: "diameter", label: "直径 ⌀" },
+                ]}
+              />
+            </ConfigItem>
+            {cadTermItem(dim.termination)}
+          </>
+        );
+      }
+
+      case "center_mark": {
+        const mark = firstAnnotation as Extract<
+          Annotation,
+          { type: "center_mark" }
+        >;
+        return (
+          <>
+            {cadColorItem(mark.stroke)}
+            {cadWidthItem(mark.strokeWidth)}
+            <ConfigItem label="大小" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Slider
+                value={mark.size}
+                onChange={(v) => updateSelectedAnnotations({ size: v })}
+                min={12}
+                max={120}
+                className={sliderClass}
+              />
+            </ConfigItem>
+          </>
+        );
+      }
+
+      case "leader": {
+        const leader = firstAnnotation as Extract<
+          Annotation,
+          { type: "leader" }
+        >;
+        return (
+          <>
+            {textFieldItem("注释", "text", leader.text, "技术要求")}
+            {cadColorItem(leader.stroke)}
+            {cadWidthItem(leader.strokeWidth)}
+            {cadFontItem(leader.fontSize)}
+            <ConfigItem label="基准线" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Slider
+                value={leader.shelfLength}
+                onChange={(v) => updateSelectedAnnotations({ shelfLength: v })}
+                min={0}
+                max={240}
+                className={sliderClass}
+              />
+            </ConfigItem>
+            {cadTermItem(leader.termination)}
+          </>
+        );
+      }
+
+      case "balloon": {
+        const balloon = firstAnnotation as Extract<
+          Annotation,
+          { type: "balloon" }
+        >;
+        return (
+          <>
+            {textFieldItem("件号", "value", String(balloon.value ?? ""), "1")}
+            {cadColorItem(balloon.stroke)}
+            {cadWidthItem(balloon.strokeWidth)}
+            <ConfigItem label="大小" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Slider
+                value={balloon.size}
+                onChange={(v) => updateSelectedAnnotations({ size: v })}
+                min={16}
+                max={80}
+                className={sliderClass}
+              />
+            </ConfigItem>
+            <ConfigItem label="外形" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <Select
+                value={balloon.shape}
+                onChange={(v) =>
+                  updateSelectedAnnotations({ shape: v as BalloonShape })
+                }
+                options={[
+                  { value: "circle", label: "圆形气泡" },
+                  { value: "rect", label: "方框" },
+                  { value: "none", label: "无框" },
+                ]}
+              />
+            </ConfigItem>
+            <ConfigItem label="文字色" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <ColorPicker
+                value={balloon.textColor}
+                onChange={(color) => updateSelectedAnnotations({ textColor: color })}
+              />
+            </ConfigItem>
+            <ConfigItem label="底色" isHorizontal={isHorizontal} isCompact={isCompact}>
+              <ColorPicker
+                value={balloon.background}
+                onChange={(color) => updateSelectedAnnotations({ background: color })}
+              />
+            </ConfigItem>
+            {cadTermItem(balloon.termination)}
+          </>
+        );
+      }
 
       default:
         return null;

@@ -1,6 +1,6 @@
 [package]
 name = "markpix"
-version = "0.5.5"
+version = "0.6.0"
 description = "一个现代化的图片标注工具"
 authors = ["snemc"]
 edition = "2021"
@@ -25,11 +25,8 @@ tauri-plugin-fs = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 base64 = "0.22"
-image = "0.25"
 dirs = "6"
 toml = "0.8"
-tempfile = "3"
 

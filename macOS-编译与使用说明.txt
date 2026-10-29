@@ -1,0 +1,426 @@
+MarkPix 0.5.5 macOS 编译与使用说明
+====================================
+
+本文档面向第一次接触 macOS 终端和 Tauri 的用户，按顺序照着做即可。
+整个编译过程不需要 Apple 开发者账号，也不需要付费软件。
+
+
+零、最快方式：一键编译脚本（推荐）
+----------------------------------
+压缩包内已附带脚本：一键编译MarkPix.command
+它会自动完成环境安装、国内镜像配置和编译，适合 Apple 芯片（M 系列）的 Mac。
+
+前提：电脑能上网，磁盘剩余 5 GB 以上。
+
+步骤：
+
+1) 把压缩包解压到用户目录，例如：
+   /Users/你的用户名/MarkPix-0.5.5
+
+2) 打开“终端”（Command + 空格，输入 Terminal，回车）。
+
+3) 输入 cd 和一个空格，把解压出来的 MarkPix-0.5.5 文件夹拖进终端窗口，回车。
+
+4) 执行脚本（把脚本文件名拖进终端也可以）：
+
+   bash 一键编译MarkPix.command
+
+5) 脚本会依次自动处理：
+   - 检查 Xcode 命令行工具（若缺失会弹出系统安装窗口，点“安装”即可）
+   - 检查 Node.js，版本不够时从 npmmirror 下载 Node 22 到 ~/.local/node（无需 sudo）
+   - 从 rsproxy 安装 Rust（无需 sudo）
+   - 配置 npm 与 Cargo 的国内镜像（只影响本项目，不改你的全局设置）
+   - 执行 npm install 和 npm run tauri build
+   - 结束后自动打开 dmg 所在文件夹
+
+6) 唯一需要手动配合的地方：
+   如果弹出“Xcode 命令行工具”安装窗口，点“安装”，等它装完，
+   回到终端按一次回车，脚本会继续。
+
+7) 完成后在打开的文件夹里双击 dmg，把 MarkPix 拖进“应用程序”。
+
+可选：生成同时支持 Apple 芯片和 Intel 的通用包
+
+   UNIVERSAL=1 bash 一键编译MarkPix.command
+
+默认只编译当前电脑的架构；M 芯片电脑产出 arm64 包。
+
+脚本说明：
+- 全过程日志保存在项目目录的 build-log.txt，失败时把它发给开发者即可排查。
+- 脚本会生成项目级配置 .npmrc 和 src-tauri/.cargo/config.toml，不修改系统全局配置。
+- 重复执行是安全的，已安装的环境会被自动跳过。
+
+如果脚本因公司网络、安全软件或权限限制无法运行，请按下面的手动步骤操作。
+
+
+一、你将得到什么
+----------------
+编译完成后会得到两个文件：
+
+1. MarkPix.app       —— 可直接运行的应用
+2. MarkPix_0.5.5_*.dmg —— 安装镜像（打开后把 MarkPix 拖进“应用程序”）
+
+注意：未做 Apple 签名，第一次打开会被系统拦截一次，按第六节的“首次打开”操作即可。
+
+
+二、电脑要求
+------------
+- macOS 10.15 Catalina 或更高版本（建议 macOS 12 及以上）
+- Apple 芯片（M1/M2/M3/M4）或 Intel 芯片都可以
+- 磁盘至少留出 5 GB（编译缓存占用较大）
+- 需要联网（第一次编译要下载依赖，约几百 MB）
+- 不需要安装 Xcode 完整版，只需要“Xcode 命令行工具”
+
+
+三、手动方式：准备工作（只需做一次）
+------------------------------------
+
+3.1 打开终端
+    按 Command + 空格，输入“终端”或“Terminal”，回车。
+
+3.2 安装 Xcode 命令行工具
+    在终端输入：
+
+        xcode-select --install
+
+    弹出窗口后点“安装”，等待完成（可能需要十几分钟）。
+    验证：
+
+        xcode-select -p
+
+    正常会显示类似 /Library/Developer/CommandLineTools 的路径。
+    如果提示“already installed”，说明已经装好，可以跳过。
+
+3.3 安装 Homebrew（macOS 的软件包管理器，推荐）
+    在终端粘贴下面这一整行并回车：
+
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+    安装结束后，终端会提示你执行两行“Next steps”命令（把 brew 加入 PATH）。
+    通常是（Apple 芯片）：
+
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+
+    Intel 芯片则是 /usr/local/bin/brew，按终端提示复制即可。
+    验证：
+
+        brew --version
+
+    如果访问 GitHub 很慢，可以直接跳到 3.4、3.5 用官网安装包，不装 Homebrew 也可以。
+
+3.4 安装 Node.js 20 LTS
+    方式一（已装 Homebrew）：
+
+        brew install node@20
+        echo 'export PATH="/opt/homebrew/opt/node@20/bin:$PATH"' >> ~/.zprofile
+        source ~/.zprofile
+
+    方式二（不装 Homebrew）：
+    浏览器打开 https://nodejs.org/zh-cn/download
+    下载 macOS Installer（.pkg），双击安装。
+    Apple 芯片与 Intel 芯片下载对应的安装包即可（官网会自动识别）。
+
+    验证：
+
+        node -v      # 应显示 v20.x.x 或更高
+        npm -v
+
+3.5 安装 Rust
+    在终端执行：
+
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+    出现提示时直接按回车（默认选项 1）。
+    然后让当前终端生效：
+
+        source "$HOME/.cargo/env"
+
+    验证：
+
+        rustc -V
+        cargo -V
+
+    如果提示 command not found: cargo，关闭终端重新打开，再执行一次
+    source "$HOME/.cargo/env" 即可。
+
+3.6 国内网络加速（可选，但强烈建议）
+    如果 npm install 或编译时下载很慢/报超时，配置镜像：
+
+    npm 镜像：
+
+        npm config set registry https://registry.npmmirror.com
+
+    Rust 镜像：
+    创建（或编辑）文件 ~/.cargo/config.toml，内容如下：
+
+        [source.crates-io]
+        replace-with = 'rsproxy-sparse'
+
+        [source.rsproxy-sparse]
+        registry = "sparse+https://rsproxy.cn/index/"
+
+        [registries.rsproxy]
+        index = "https://rsproxy.cn/crates.io-index"
+
+        [net]
+        git-fetch-with-cli = true
+
+    可以直接在终端执行下面这段一次性写入：
+
+        mkdir -p ~/.cargo
+        cat > ~/.cargo/config.toml <<'EOF'
+        [source.crates-io]
+        replace-with = 'rsproxy-sparse'
+
+        [source.rsproxy-sparse]
+        registry = "sparse+https://rsproxy.cn/index/"
+
+        [registries.rsproxy]
+        index = "https://rsproxy.cn/crates.io-index"
+
+        [net]
+        git-fetch-with-cli = true
+        EOF
+
+
+四、编译步骤
+------------
+4.1 解压项目
+    把 MarkPix-0.5.5-mac-build.zip 解压，得到 MarkPix-0.5.5 文件夹。
+    建议放在“用户目录”下，例如：
+
+        /Users/你的用户名/MarkPix-0.5.5
+
+4.2 进入项目目录
+    在终端输入 cd，加一个空格，然后把 MarkPix-0.5.5 文件夹直接拖进终端窗口，
+    回车。例如：
+
+        cd /Users/你的用户名/MarkPix-0.5.5
+
+    验证当前目录是否正确：
+
+        ls
+
+    应能看到 package.json、src、src-tauri 等。
+
+4.3 安装前端依赖
+
+        npm install
+
+    成功标志：出现 added xxx packages，且没有红色 ERR!。
+    如果失败，先执行第三节 3.6 的 npm 镜像配置，再重试。
+
+4.4 开始编译
+
+        npm run tauri build
+
+    说明：
+    - 第一次编译需要 10~30 分钟（要下载并编译 Rust 依赖），请保持联网。
+    - 中途出现大量 Compiling xxx 是正常现象。
+    - 最后出现 Finished release 和 Built application at ... 即成功。
+
+4.5 找到产物
+    编译完成后，产物在：
+
+        src-tauri/target/release/bundle/dmg/MarkPix_0.5.5_*.dmg
+        src-tauri/target/release/bundle/macos/MarkPix.app
+
+    在 Finder 中打开方式：在终端执行
+
+        open src-tauri/target/release/bundle/dmg
+
+    会直接打开 dmg 所在文件夹。
+
+
+五、生成同时支持 Apple 芯片和 Intel 的安装包（可选）
+----------------------------------------------------
+默认只编译“当前这台 Mac”的架构。如果想让 Intel 和 Apple 芯片都能用，
+在编译前执行：
+
+        rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+然后：
+
+        npm run tauri build -- --target universal-apple-darwin
+
+产物路径同样是 bundle/dmg 目录，体积会比单架构大约一倍。
+
+
+六、安装与首次打开
+------------------
+6.1 安装
+    双击 dmg，把 MarkPix 图标拖到“应用程序”文件夹。
+    然后在“启动台”或“应用程序”中打开 MarkPix。
+
+6.2 首次打开被拦截怎么办
+    因为安装包没有 Apple 签名，第一次打开可能提示
+    “无法打开，因为无法验证开发者”。
+
+    处理方式（任选一种）：
+    A. 在“应用程序”里右键点击 MarkPix，选择“打开”，
+       弹窗中再点一次“打开”。之后就可以正常双击打开。
+    B. 打开“系统设置” -> “隐私与安全性”，
+       在页面下方找到关于 MarkPix 的提示，点“仍要打开”。
+    C. 如果提示“已损坏，无法打开”，在终端执行：
+
+        xattr -cr /Applications/MarkPix.app
+
+    然后再打开。
+
+6.3 卸载
+    直接把“应用程序”里的 MarkPix.app 拖到废纸篓即可。
+
+
+七、MarkPix 使用说明
+--------------------
+7.1 打开图片
+    - 启动后通过“打开图片”选择文件；
+    - 也可以直接把图片拖进窗口，或按 Control + V 粘贴剪贴板中的图片。
+
+7.2 工具栏与快捷键
+    在画布上按下列字母键可切换工具（输入文字时不会触发）：
+
+        V  选择 / 移动
+        H  手型（平移画布）
+        R  矩形
+        E  椭圆
+        A  箭头
+        L  直线
+        T  文字
+        B  画笔
+        M  序号标记
+        N  引导序号（序号 + 箭头）
+        U  马赛克 / 模糊
+        C  裁剪
+        Z  放大镜
+
+    重要：本应用的组合键使用 Control 键（不是 Command 键）。
+
+        Control + S        保存（覆盖当前图片路径）
+        Control + C        复制带标注的图片到剪贴板
+        Control + V        粘贴图片
+        Control + Z        撤销
+        Control + Y        重做
+        Delete / Backspace 删除选中的标注
+        F12                打开开发者工具（排错用）
+
+7.3 引导序号（序号 + 箭头）
+    1) 选择“引导序号”工具（快捷键 N）；
+    2) 在图片上按下鼠标的位置生成圆形序号，拖到目标位置松开，
+       即可得到“序号圆 + 箭头”的 CAD 风格引导注释；
+    3) 右侧工具配置面板可设置：
+       - 颜色
+       - 序号圆大小
+       - 线条粗细（箭头和引线）
+       - 实心 / 空心
+       - 箭头样式（普通 / 实心）
+       - 实线 / 虚线
+       - 序号类型（数字 / 字母）与起始序号（可直接输入数字）
+    4) 选中已有引导序号后，可在“标注属性”面板继续修改上述样式。
+
+7.4 样式自动保存
+    所有工具的样式（颜色、粗细、大小、序号类型等）在修改后会自动保存，
+    下次启动应用时自动恢复，不需要手动保存设置。
+
+7.5 保存与导出
+    - “保存”：直接覆盖当前图片文件；
+    - “导出 / 另存为”：选择新路径另存；
+    - “复制”：把带标注的图片复制到剪贴板，可直接粘贴到聊天工具。
+
+7.6 撤销与重做
+    历史记录最多保留最近 50 步，撤销/重做只影响标注，不会破坏原图文件，
+    直到你执行保存。
+
+
+八、常见问题
+------------
+8.1 xcrun: error: invalid active developer path
+    原因：Xcode 命令行工具没装好。
+    解决：重新执行 xcode-select --install；装完后执行
+          sudo xcode-select --reset
+
+8.2 error: linker command failed / cc: command not found
+    原因：缺少 C 编译器。
+    解决：安装 Xcode 命令行工具（3.2），确认 clang --version 可用。
+
+8.3 command not found: cargo
+    解决：source "$HOME/.cargo/env"，或关闭终端重新打开。
+
+8.4 npm install 卡住或报网络错误
+    解决：按 3.6 配置 npmmirror 镜像后重试：
+          npm config set registry https://registry.npmmirror.com
+          npm install
+
+8.5 编译 Rust 依赖时下载超时
+    解决：按 3.6 配置 rsproxy 镜像，然后重新执行 npm run tauri build。
+
+8.6 提示 Permission denied
+    解决：不要用 sudo 跑 npm；项目目录应放在用户目录下，
+          确认当前用户对目录有读写权限。
+
+8.7 编译成功但打不开应用
+    解决：按第六节 6.2 处理 Gatekeeper；仍不行时在终端执行：
+          /Applications/MarkPix.app/Contents/MacOS/MarkPix
+          查看错误输出。
+
+8.8 想重新编译 / 修改代码后重新打包
+    直接再次执行：
+
+        npm run tauri build
+
+    不需要重新安装环境。若要彻底清理缓存：
+
+        rm -rf src-tauri/target
+        npm run tauri build
+
+8.9 执行脚本提示 Permission denied
+    不要双击运行，直接在终端执行：
+
+        bash 一键编译MarkPix.command
+
+    或者先赋予执行权限：
+
+        chmod +x 一键编译MarkPix.command
+        ./一键编译MarkPix.command
+
+8.10 双击脚本没有反应，或提示“无法打开”
+    原因：下载的脚本带有系统隔离标记。
+    解决：在“终端”里用 bash 执行（推荐），或右键脚本 -> 打开。
+    如仍被拦截，可执行：
+
+        xattr -dr com.apple.quarantine 一键编译MarkPix.command
+
+8.11 脚本下载依赖很慢或中断
+    解决：
+    - 确认网络能访问 registry.npmmirror.com 和 rsproxy.cn；
+    - 重新执行脚本，已下载的部分会复用；
+    - 查看项目目录下的 build-log.txt 定位具体失败步骤；
+    - 公司网络有代理时，先配置好终端代理再运行脚本。
+
+8.12 脚本完成后没有自动打开文件夹
+    产物固定在这个位置，手动打开即可：
+
+        src-tauri/target/release/bundle/dmg
+
+
+九、目录说明（编译相关）
+------------------------
+    package.json           前端依赖与脚本
+    src/                   React 前端源码
+    src-tauri/             Rust 后端与 Tauri 配置
+    src-tauri/tauri.conf.json  应用名称、版本、打包配置
+    src-tauri/icons/       应用图标
+    src-tauri/target/      编译产物（压缩包中已排除，编译后生成）
+
+注意：不要把 node_modules 和 src-tauri/target 拷来拷去，
+在新机器上执行 npm install 会重新生成。
+
+
+十、安全提示
+------------
+- 本项目编译过程只使用官方 Node.js、Rust 与 npm 依赖源；
+- 若使用第三方镜像（npmmirror、rsproxy），请确认来源可信；
+- 不要把带有个人隐私的图片上传到不可信的在线转换网站。
+
+—— 文档结束 ——

@@ -103,3 +103,54 @@ export function formatFileSize(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
+
+/**
+ * 判断颜色是否为“接近白色/透明”（在白色背景上几乎不可见）
+ * 支持 #rgb / #rrggbb / rgba() / rgb() / 常见命名色
+ */
+export function isNearWhiteColor(color?: string): boolean {
+  if (!color) return true;
+  const trimmed = color.trim();
+  if (trimmed === "transparent") return true;
+
+  // 命名颜色
+  const named: Record<string, string> = {
+    white: "#ffffff",
+    black: "#000000",
+    red: "#ff0000",
+    gray: "#808080",
+    grey: "#808080",
+  };
+  const src = named[trimmed.toLowerCase()] ?? trimmed;
+
+  let r = 0, g = 0, b = 0;
+  if (src.startsWith("#")) {
+    const hex = src.slice(1);
+    if (hex.length === 3) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+    } else if (hex.length === 6) {
+      r = parseInt(hex.slice(0, 2), 16);
+      g = parseInt(hex.slice(2, 4), 16);
+      b = parseInt(hex.slice(4, 6), 16);
+    } else {
+      return false;
+    }
+  } else {
+    const match = src.match(/rgba?\(([^)]+)\)/);
+    if (match) {
+      const parts = match[1].split(",").map((p) => p.trim());
+      r = Math.round(Number(parts[0]) || 0);
+      g = Math.round(Number(parts[1]) || 0);
+      b = Math.round(Number(parts[2]) || 0);
+      const a = parts[3] !== undefined ? Number(parts[3]) : 1;
+      if (!isNaN(a) && a < 0.5) return true;
+    } else {
+      return false;
+    }
+  }
+
+  // 三通道都接近白色（阈值 0.92 = 约 235）
+  return r >= 235 && g >= 235 && b >= 235;
+}

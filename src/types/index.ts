@@ -13,10 +13,17 @@ export type ToolType =
   | "text" // 文字
   | "brush" // 画笔
   | "marker" // 序号标记
+  | "callout" // 序号引导箭头
   | "blur" // 马赛克/模糊
   | "crop" // 裁剪
   | "image" // 图片贴图
-  | "magnifier"; // 放大镜
+  | "magnifier" // 放大镜
+  | "dim_linear" // 线性尺寸标注（CAD/ASME-ISO）
+  | "dim_angular" // 角度尺寸标注
+  | "dim_radial" // 半径/直径尺寸标注
+  | "center_mark" // 中心线标记
+  | "leader" // 引线标注
+  | "balloon"; // 件号气泡
 
 /**
  * 白板纹理类型
@@ -62,6 +69,36 @@ export type BubbleTailPosition = "left" | "right";
  * 序号标记类型
  */
 export type MarkerType = "number" | "letter";
+
+/**
+ * CAD 尺寸线端点符号
+ * - arrow: ASME/ISO 闭合实心箭头（细长三角）
+ * - slash: ISO 45° 斜线（欧洲图纸常用）
+ * - dot: 圆点（密集空间常用）
+ */
+export type CadTermination = "arrow" | "slash" | "dot";
+
+/**
+ * 线性尺寸测量方向
+ */
+export type DimMode = "aligned" | "horizontal" | "vertical";
+
+/**
+ * 尺寸文字位置
+ * - above: 文字位于尺寸线上方（ASME 默认）
+ * - inline: 文字居中并打断尺寸线（ISO 常用）
+ */
+export type DimTextPosition = "above" | "inline";
+
+/**
+ * 径向尺寸类型
+ */
+export type RadialKind = "radius" | "diameter";
+
+/**
+ * 件号气泡外形
+ */
+export type BalloonShape = "circle" | "rect" | "none";
 
 /**
  * 基础标注对象属性
@@ -177,6 +214,24 @@ export interface MarkerAnnotation extends BaseAnnotation {
 }
 
 /**
+ * 序号引导箭头标注（序号圆标记 + 指向目标的箭头）
+ */
+export interface CalloutAnnotation extends BaseAnnotation {
+  type: "callout";
+  value: number | string;
+  targetX: number; // 箭头尖端相对标记中心的水平偏移
+  targetY: number; // 箭头尖端相对标记中心的垂直偏移
+  markerStyle: MarkerStyle;
+  markerType: MarkerType;
+  size: number;
+  fill: string;
+  textColor: string;
+  strokeWidth: number;
+  lineStyle: LineStyle;
+  arrowStyle: ArrowStyle;
+}
+
+/**
  * 模糊区域标注
  */
 export interface BlurAnnotation extends BaseAnnotation {
@@ -213,6 +268,94 @@ export interface MagnifierAnnotation extends BaseAnnotation {
 }
 
 /**
+ * CAD 标注通用样式属性（尺寸线、尺寸界线、文字共用）
+ */
+export interface CadStyleFields {
+  stroke: string;
+  strokeWidth: number;
+  fontSize: number;
+  fontFamily: string;
+}
+
+/**
+ * 线性尺寸标注（对齐 / 水平 / 垂直）
+ * x, y 为第一测量点，其余坐标均相对该点
+ */
+export interface DimLinearAnnotation extends BaseAnnotation, CadStyleFields {
+  type: "dim_linear";
+  p2x: number; // 第二测量点相对偏移
+  p2y: number;
+  placeX: number; // 尺寸线定位点相对偏移
+  placeY: number;
+  mode: DimMode;
+  termination: CadTermination;
+  textPosition: DimTextPosition;
+  showExtension: boolean; // 是否绘制尺寸界线
+  text: string; // 标注值（手工输入）
+}
+
+/**
+ * 角度尺寸标注：x, y 为顶点，a/b 为两条边上的点
+ */
+export interface DimAngularAnnotation extends BaseAnnotation, CadStyleFields {
+  type: "dim_angular";
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  arcRadius: number;
+  text: string;
+}
+
+/**
+ * 半径 / 直径尺寸标注：x, y 为圆心，e 为圆周点（定义半径向量）
+ */
+export interface DimRadialAnnotation extends BaseAnnotation, CadStyleFields {
+  type: "dim_radial";
+  ex: number;
+  ey: number;
+  kind: RadialKind;
+  text: string;
+  termination: CadTermination;
+}
+
+/**
+ * 中心线标记（孔心十字）
+ */
+export interface CenterMarkAnnotation extends BaseAnnotation, CadStyleFields {
+  type: "center_mark";
+  size: number;
+}
+
+/**
+ * 引线标注：x, y 为指向对象的端点，折点后接水平基准线
+ */
+export interface LeaderAnnotation extends BaseAnnotation, CadStyleFields {
+  type: "leader";
+  elbowX: number;
+  elbowY: number;
+  shelfDir: 1 | -1; // 水平基准线方向
+  shelfLength: number;
+  text: string;
+  termination: CadTermination;
+}
+
+/**
+ * 件号气泡：x, y 为气泡中心，target 为指引线指向的目标点
+ */
+export interface BalloonAnnotation extends BaseAnnotation, CadStyleFields {
+  type: "balloon";
+  value: number | string;
+  shape: BalloonShape;
+  targetX: number;
+  targetY: number;
+  termination: CadTermination;
+  size: number;
+  background: string;
+  textColor: string;
+}
+
+/**
  * 所有标注类型联合
  */
 export type Annotation =
@@ -223,9 +366,16 @@ export type Annotation =
   | TextAnnotation
   | BrushAnnotation
   | MarkerAnnotation
+  | CalloutAnnotation
   | BlurAnnotation
   | ImageAnnotation
-  | MagnifierAnnotation;
+  | MagnifierAnnotation
+  | DimLinearAnnotation
+  | DimAngularAnnotation
+  | DimRadialAnnotation
+  | CenterMarkAnnotation
+  | LeaderAnnotation
+  | BalloonAnnotation;
 
 /**
  * 工具配置
@@ -267,6 +417,15 @@ export interface ToolConfig {
 
   // 放大镜
   magnifierScale: number; // 放大倍率
+
+  // CAD 尺寸标注
+  cadStrokeWidth: number; // 尺寸线线宽（图纸用细线）
+  dimMode: DimMode;
+  dimTermination: CadTermination;
+  dimTextPosition: DimTextPosition;
+  showExtensionLines: boolean;
+  radialKind: RadialKind;
+  balloonShape: BalloonShape;
 }
 
 /**
@@ -328,6 +487,27 @@ export interface ImageInfo {
 }
 
 /**
+ * 保存在 PNG 中的 MarkPix 标注元数据
+ */
+export interface MarkpixFileMeta {
+  app: "markpix";
+  version: number;
+  createdAt: number;
+  imageWidth: number;
+  imageHeight: number;
+  markerCounter: number;
+  annotations: Annotation[];
+}
+
+/**
+ * 从 PNG 中读取到的 MarkPix 内嵌数据
+ */
+export interface MarkpixFilePayload {
+  meta: string;
+  base: string | null;
+}
+
+/**
  * 工具栏布局方向
  */
 export type ToolbarOrientation = "horizontal" | "vertical";
@@ -354,4 +534,5 @@ export interface AppConfig {
     bubble_fill?: string;
     bubble_tail_position?: BubbleTailPosition;
   };
+  tool_config?: Partial<ToolConfig>;
 }

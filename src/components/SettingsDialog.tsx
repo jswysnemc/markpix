@@ -92,7 +92,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       const dir = configPath.substring(0, configPath.lastIndexOf("/"));
       await invoke("open_directory", { path: dir });
     } catch (error) {
-      console.error("打开目录失败:", error);
       alert(`打开目录失败: ${error}`);
     }
   };

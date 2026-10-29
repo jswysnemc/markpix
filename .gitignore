@@ -40,5 +40,14 @@ Thumbs.db
 *.temp
 /tmp/
 
-Cargo.lock
+# 本地构建辅助（由一键脚本生成）
+.npmrc
+build-log.txt
+src-tauri/.cargo/
+
+# 本地打包产物，不纳入仓库
+*.exe
+*.zip
+*.dmg
+
 release/

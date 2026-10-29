@@ -78,6 +78,8 @@ pub struct AppConfig {
     pub custom_actions: Vec<CustomAction>,
     /// 文本工具配置
     pub text_tool_config: TextToolConfig,
+    /// 各工具的样式配置（自动保存）
+    pub tool_config: toml::Value,
 }
 
 impl Default for AppConfig {
@@ -87,6 +89,7 @@ impl Default for AppConfig {
             output_pattern: "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png".to_string(),
             custom_actions: vec![],
             text_tool_config: TextToolConfig::default(),
+            tool_config: toml::Value::Table(toml::map::Map::new()),
         }
     }
 }
@@ -120,19 +123,17 @@ impl AppConfig {
     /// 创建带示例的默认配置
     fn default_with_examples() -> Self {
         let mut config = Self::default();
-        config.custom_actions = vec![
-            CustomAction {
-                name: "打开所在文件夹".to_string(),
-                command: if cfg!(target_os = "windows") {
-                    "explorer /select, \"{file}\"".to_string()
-                } else if cfg!(target_os = "macos") {
-                    "open -R \"{file}\"".to_string()
-                } else {
-                    "xdg-open \"$(dirname \"{file}\")\"".to_string()
-                },
-                icon: Some("folder".to_string()),
+        config.custom_actions = vec![CustomAction {
+            name: "打开所在文件夹".to_string(),
+            command: if cfg!(target_os = "windows") {
+                "explorer /select, \"{file}\"".to_string()
+            } else if cfg!(target_os = "macos") {
+                "open -R \"{file}\"".to_string()
+            } else {
+                "xdg-open \"$(dirname \"{file}\")\"".to_string()
             },
-        ];
+            icon: Some("folder".to_string()),
+        }];
         config
     }
 
@@ -162,6 +163,157 @@ fn get_initial_image(state: State<AppState>) -> Option<String> {
     state.initial_image_path.lock().unwrap().clone()
 }
 
+/// PNG 文件签名
+const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+/// MarkPix 标注元数据的关键字
+const MARKPIX_META_KEYWORD: &str = "markpix";
+/// 内嵌背景图的私有 chunk 类型
+const MARKPIX_BASE_CHUNK: [u8; 4] = *b"mxBt";
+
+/// 计算 PNG 使用的 CRC32
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB8_8320;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    !crc
+}
+
+/// 构造 PNG chunk（长度 + 类型 + 数据 + CRC）
+fn build_png_chunk(chunk_type: [u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut chunk = Vec::with_capacity(data.len() + 12);
+    chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    chunk.extend_from_slice(&chunk_type);
+    chunk.extend_from_slice(data);
+    let crc = crc32(&chunk[4..]);
+    chunk.extend_from_slice(&crc.to_be_bytes());
+    chunk
+}
+
+/// 构造未压缩的 iTXt chunk
+fn build_itxt_chunk(keyword: &str, text: &str) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(keyword.as_bytes());
+    data.push(0); // keyword 结束
+    data.push(0); // 未压缩
+    data.push(0); // 压缩方法
+    data.push(0); // language tag 为空
+    data.push(0); // translated keyword 为空
+    data.extend_from_slice(text.as_bytes());
+    build_png_chunk(*b"iTXt", &data)
+}
+
+/// PNG chunk 信息
+struct PngChunk<'a> {
+    chunk_type: [u8; 4],
+    data: &'a [u8],
+}
+
+/// 遍历 PNG 的所有 chunk，同时返回 IEND 的起始偏移
+fn parse_png_chunks(bytes: &[u8]) -> Result<(Vec<PngChunk<'_>>, usize), String> {
+    if bytes.len() < 8 || &bytes[..8] != &PNG_SIGNATURE[..] {
+        return Err("不是有效的 PNG 文件".to_string());
+    }
+
+    let mut chunks = Vec::new();
+    let mut offset = 8;
+    let mut iend_offset = 0;
+
+    while offset + 8 <= bytes.len() {
+        let length = u32::from_be_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as usize;
+        if offset + 12 + length > bytes.len() {
+            return Err("PNG 数据不完整".to_string());
+        }
+        let chunk_type = [
+            bytes[offset + 4],
+            bytes[offset + 5],
+            bytes[offset + 6],
+            bytes[offset + 7],
+        ];
+        let data = &bytes[offset + 8..offset + 8 + length];
+        if &chunk_type == b"IEND" {
+            iend_offset = offset;
+        }
+        chunks.push(PngChunk { chunk_type, data });
+        offset += 12 + length;
+    }
+
+    if iend_offset == 0 {
+        return Err("PNG 缺少 IEND".to_string());
+    }
+
+    Ok((chunks, iend_offset))
+}
+
+/// 在 IEND 之前插入自定义 chunk
+fn insert_png_chunks(bytes: &[u8], extra: &[u8]) -> Result<Vec<u8>, String> {
+    let (_, iend_offset) = parse_png_chunks(bytes)?;
+    let mut result = Vec::with_capacity(bytes.len() + extra.len());
+    result.extend_from_slice(&bytes[..iend_offset]);
+    result.extend_from_slice(extra);
+    result.extend_from_slice(&bytes[iend_offset..]);
+    Ok(result)
+}
+
+/// 从 iTXt 数据中提取指定 keyword 的文本（仅支持未压缩）
+fn parse_itxt(data: &[u8], keyword: &str) -> Option<String> {
+    let keyword_bytes = keyword.as_bytes();
+    if data.len() < keyword_bytes.len() + 3 {
+        return None;
+    }
+    if &data[..keyword_bytes.len()] != keyword_bytes || data[keyword_bytes.len()] != 0 {
+        return None;
+    }
+
+    let mut pos = keyword_bytes.len() + 1;
+    let compressed = *data.get(pos)?;
+    if compressed != 0 {
+        return None;
+    }
+    pos += 2; // 跳过压缩标志和压缩方法
+    let lang_end = data[pos..].iter().position(|&b| b == 0)? + pos;
+    pos = lang_end + 1;
+    let translated_end = data[pos..].iter().position(|&b| b == 0)? + pos;
+    pos = translated_end + 1;
+
+    String::from_utf8(data[pos..].to_vec()).ok()
+}
+
+/// 解码 data URL 或纯 base64 数据
+fn decode_image_data(data: &str) -> Result<Vec<u8>, String> {
+    // 支持两种格式：完整的 data URL 或纯 base64 数据
+    let base64_data = if data.contains(',') {
+        data.split(',').nth(1).unwrap_or(data)
+    } else {
+        data
+    };
+
+    STANDARD
+        .decode(base64_data)
+        .map_err(|e| format!("Base64 解码失败: {}", e))
+}
+
+/// MarkPix 文件内嵌数据
+#[derive(Debug, Clone, Serialize)]
+pub struct MarkpixFileData {
+    /// 标注元数据 JSON
+    pub meta: String,
+    /// 无标注的背景图（data URL），可能为空
+    pub base: Option<String>,
+}
+
 /// 读取图片文件并返回 Base64 编码
 #[tauri::command]
 fn read_image_file(path: String) -> Result<String, String> {
@@ -187,23 +339,74 @@ fn read_image_file(path: String) -> Result<String, String> {
 }
 
 /// 保存图片到文件
+///
+/// 当提供 `meta` 且图片数据是 PNG 时，会把标注 JSON（iTXt）与无标注背景图（mxBt）
+/// 内嵌到文件中，这样再次用本程序打开时可以继续编辑原有标注。
 #[tauri::command]
-fn save_image_file(path: String, data: String) -> Result<(), String> {
-    // 支持两种格式：完整的 data URL 或纯 base64 数据
-    let base64_data = if data.contains(',') {
-        // 完整的 data URL 格式: data:image/png;base64,xxxxx
-        data.split(',').nth(1).unwrap_or(&data)
-    } else {
-        // 纯 base64 数据
-        &data
+fn save_image_file(
+    path: String,
+    data: String,
+    base: Option<String>,
+    meta: Option<String>,
+) -> Result<(), String> {
+    let bytes = decode_image_data(&data)?;
+
+    let final_bytes = match meta {
+        Some(meta_json) if !meta_json.is_empty() => {
+            let mut extra = build_itxt_chunk(MARKPIX_META_KEYWORD, &meta_json);
+            if let Some(base_data) = base {
+                if !base_data.is_empty() {
+                    let base_bytes = decode_image_data(&base_data)?;
+                    extra.extend_from_slice(&build_png_chunk(MARKPIX_BASE_CHUNK, &base_bytes));
+                }
+            }
+            insert_png_chunks(&bytes, &extra)?
+        }
+        _ => bytes,
     };
 
-    let bytes = STANDARD
-        .decode(base64_data)
-        .map_err(|e| format!("Base64 解码失败: {}", e))?;
-
-    fs::write(&path, bytes).map_err(|e| format!("保存文件失败: {}", e))?;
+    fs::write(&path, final_bytes).map_err(|e| format!("保存文件失败: {}", e))?;
     Ok(())
+}
+
+/// 读取 PNG 文件中内嵌的 MarkPix 标注数据（非 MarkPix 文件返回 None）
+#[tauri::command]
+fn read_markpix_meta(path: String) -> Result<Option<MarkpixFileData>, String> {
+    let path = PathBuf::from(&path);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let bytes = fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    if bytes.len() < 8 || &bytes[..8] != &PNG_SIGNATURE[..] {
+        return Ok(None);
+    }
+
+    let chunks = match parse_png_chunks(&bytes) {
+        Ok((chunks, _)) => chunks,
+        Err(_) => return Ok(None),
+    };
+
+    let mut meta: Option<String> = None;
+    let mut base: Option<String> = None;
+
+    for chunk in chunks {
+        if &chunk.chunk_type == b"iTXt" {
+            if let Some(text) = parse_itxt(chunk.data, MARKPIX_META_KEYWORD) {
+                meta = Some(text);
+            }
+        } else if chunk.chunk_type == MARKPIX_BASE_CHUNK {
+            base = Some(format!(
+                "data:image/png;base64,{}",
+                STANDARD.encode(chunk.data)
+            ));
+        }
+    }
+
+    match meta {
+        Some(meta) => Ok(Some(MarkpixFileData { meta, base })),
+        None => Ok(None),
+    }
 }
 
 /// 获取自定义动作列表
@@ -242,22 +445,19 @@ fn execute_custom_action(
         // 从 base64 数据创建临时文件
         let temp_dir = std::env::temp_dir().join("markpix");
         fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
-        
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
         let temp_path = temp_dir.join(format!("markpix-{}.png", timestamp));
 
-        let base64_data = data
-            .split(',')
-            .nth(1)
-            .ok_or("无效的图片数据格式")?;
+        let base64_data = data.split(',').nth(1).ok_or("无效的图片数据格式")?;
         let bytes = STANDARD
             .decode(base64_data)
             .map_err(|e| format!("Base64 解码失败: {}", e))?;
         fs::write(&temp_path, &bytes).map_err(|e| format!("保存临时文件失败: {}", e))?;
-        
+
         temp_path.to_string_lossy().to_string()
     } else {
         return Err("需要提供图片路径或图片数据".to_string());
@@ -281,7 +481,10 @@ fn execute_custom_action(
     #[cfg(not(target_os = "windows"))]
     {
         // 使用 nohup 和 & 在后台运行，脱离父进程
-        let bg_command = format!("nohup sh -c '{}' >/dev/null 2>&1 &", command.replace("'", "'\"'\"'"));
+        let bg_command = format!(
+            "nohup sh -c '{}' >/dev/null 2>&1 &",
+            command.replace("'", "'\"'\"'")
+        );
         Command::new("sh")
             .args(["-c", &bg_command])
             .stdin(std::process::Stdio::null())
@@ -311,20 +514,20 @@ fn get_config_path() -> String {
 /// 直接从 base64 数据复制图片到剪贴板（更快，无需临时文件）
 #[tauri::command]
 fn copy_image_data_to_clipboard(data: String) -> Result<(), String> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
     // 解码 base64 数据
-    let image_data = STANDARD.decode(&data)
+    let image_data = STANDARD
+        .decode(&data)
         .map_err(|e| format!("解码图片数据失败: {}", e))?;
-    
+
     copy_raw_image_to_clipboard(&image_data)
 }
 
 /// 复制图片到剪贴板（Wayland 使用 wl-copy）
 #[tauri::command]
 fn copy_image_to_clipboard(path: String) -> Result<(), String> {
-    let image_data = std::fs::read(&path)
-        .map_err(|e| format!("读取图片文件失败: {}", e))?;
+    let image_data = std::fs::read(&path).map_err(|e| format!("读取图片文件失败: {}", e))?;
     copy_raw_image_to_clipboard(&image_data)
 }
 
@@ -333,7 +536,7 @@ fn copy_raw_image_to_clipboard(image_data: &[u8]) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use std::io::Write;
-        
+
         // 优先尝试 wl-copy (Wayland)
         let wl_result = Command::new("wl-copy")
             .args(["--type", "image/png"])
@@ -345,26 +548,33 @@ fn copy_raw_image_to_clipboard(image_data: &[u8]) -> Result<(), String> {
                 }
                 child.wait()
             });
-        
+
         if wl_result.is_ok() {
             return Ok(());
         }
-        
+
         // 回退到 xclip (X11) - 需要通过 stdin 传递数据
         let mut child = Command::new("xclip")
             .args(["-selection", "clipboard", "-t", "image/png"])
             .stdin(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| format!("执行剪贴板命令失败: {}。请确保已安装 wl-copy (wl-clipboard) 或 xclip", e))?;
-        
+            .map_err(|e| {
+                format!(
+                    "执行剪贴板命令失败: {}。请确保已安装 wl-copy (wl-clipboard) 或 xclip",
+                    e
+                )
+            })?;
+
         if let Some(stdin) = child.stdin.as_mut() {
-            stdin.write_all(image_data)
+            stdin
+                .write_all(image_data)
                 .map_err(|e| format!("写入剪贴板数据失败: {}", e))?;
         }
-        
-        let status = child.wait()
+
+        let status = child
+            .wait()
             .map_err(|e| format!("等待剪贴板命令完成失败: {}", e))?;
-        
+
         if !status.success() {
             return Err("剪贴板命令执行失败".to_string());
         }
@@ -373,9 +583,8 @@ fn copy_raw_image_to_clipboard(image_data: &[u8]) -> Result<(), String> {
     {
         // macOS: 保存到临时文件后使用 osascript 复制
         let temp_path = std::env::temp_dir().join("markpix_clipboard.png");
-        std::fs::write(&temp_path, image_data)
-            .map_err(|e| format!("保存临时文件失败: {}", e))?;
-        
+        std::fs::write(&temp_path, image_data).map_err(|e| format!("保存临时文件失败: {}", e))?;
+
         let script = format!(
             "set the clipboard to (read (POSIX file \"{}\") as «class PNGf»)",
             temp_path.display()
@@ -389,10 +598,12 @@ fn copy_raw_image_to_clipboard(image_data: &[u8]) -> Result<(), String> {
     {
         // Windows: 需要保存到临时文件
         let temp_path = std::env::temp_dir().join("markpix_clipboard.png");
-        std::fs::write(&temp_path, image_data)
-            .map_err(|e| format!("保存临时文件失败: {}", e))?;
+        std::fs::write(&temp_path, image_data).map_err(|e| format!("保存临时文件失败: {}", e))?;
         Command::new("powershell")
-            .args(["-Command", &format!("Set-Clipboard -Path '{}'", temp_path.display())])
+            .args([
+                "-Command",
+                &format!("Set-Clipboard -Path '{}'", temp_path.display()),
+            ])
             .output()
             .map_err(|e| format!("复制到剪贴板失败: {}", e))?;
     }
@@ -660,6 +871,7 @@ pub fn run_with_args(
             get_initial_image,
             read_image_file,
             save_image_file,
+            read_markpix_meta,
             get_custom_actions,
             get_cli_output_pattern,
             execute_custom_action,

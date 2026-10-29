@@ -15,6 +15,29 @@ export default defineConfig(async () => ({
     },
   },
 
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const path = id.replace(/\\/g, "/");
+          if (!path.includes("/node_modules/")) return;
+          if (path.includes("/node_modules/konva/") || path.includes("/node_modules/react-konva/")) {
+            return "konva";
+          }
+          if (path.includes("@tauri-apps")) return "tauri";
+          if (
+            path.includes("/node_modules/react/") ||
+            path.includes("/node_modules/react-dom/") ||
+            path.includes("/node_modules/scheduler/")
+          ) {
+            return "react";
+          }
+          return "vendor";
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

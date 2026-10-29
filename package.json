@@ -1,7 +1,7 @@
 {
   "name": "markpix",
   "private": true,
-  "version": "0.5.4",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,8 +13,6 @@
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
-    "@tauri-apps/plugin-fs": "^2.4.5",
-    "@tauri-apps/plugin-opener": "^2.5.3",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "konva": "^10.0.12",
     "react": "^19.1.0",
@@ -36,5 +34,8 @@
     "tailwindcss": "^4.1.17",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

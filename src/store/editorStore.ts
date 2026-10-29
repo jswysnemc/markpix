@@ -44,6 +44,15 @@ const defaultToolConfig: ToolConfig = {
   cornerRadius: 0, // 矩形圆角，默认为0
   arrowStyle: "filled", // 默认实心箭头
   magnifierScale: 2, // 放大镜倍率，默认2倍
+
+  // CAD 尺寸标注（图纸线宽较细，独立于其他标注）
+  cadStrokeWidth: 1.6,
+  dimMode: "aligned",
+  dimTermination: "arrow",
+  dimTextPosition: "above",
+  showExtensionLines: true,
+  radialKind: "radius",
+  balloonShape: "circle",
 };
 
 const defaultWhiteboardConfig: WhiteboardConfig = {
@@ -52,23 +61,6 @@ const defaultWhiteboardConfig: WhiteboardConfig = {
   color: "#ffffff",
   texture: "none",
 };
-
-const TEXT_TOOL_CONFIG_KEYS: Array<keyof ToolConfig> = [
-  "strokeColor",
-  "fontSize",
-  "fontFamily",
-  "textBackgroundColor",
-  "textStyle",
-  "bubbleStroke",
-  "bubbleFill",
-  "bubbleTailPosition",
-];
-
-function hasTextToolConfigPatch(config: Partial<ToolConfig>): boolean {
-  return Object.keys(config).some((key) =>
-    TEXT_TOOL_CONFIG_KEYS.includes(key as keyof ToolConfig)
-  );
-}
 
 function serializeTextToolConfig(toolConfig: ToolConfig) {
   return {
@@ -84,9 +76,99 @@ function serializeTextToolConfig(toolConfig: ToolConfig) {
 }
 
 /**
+ * 工具样式自动保存的防抖定时器
+ */
+let toolConfigSaveTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleToolConfigSave(save: () => void) {
+  if (toolConfigSaveTimer !== null) {
+    clearTimeout(toolConfigSaveTimer);
+  }
+  toolConfigSaveTimer = setTimeout(() => {
+    toolConfigSaveTimer = null;
+    save();
+  }, 300);
+}
+
+/**
  * 历史记录最大长度
  */
 const MAX_HISTORY_LENGTH = 50;
+
+/**
+ * 非激活文档的状态快照
+ */
+interface DocumentSnapshot {
+  image: ImageInfo;
+  annotations: Annotation[];
+  history: HistoryState[];
+  historyIndex: number;
+  cropMask: CropMask | null;
+  markerCounter: number;
+  viewState: ViewState;
+}
+
+/**
+ * 文档标签页
+ */
+export interface DocumentTab {
+  id: string;
+  title: string;
+  savePath: string | null;
+  /** 最近一次保存/打开时的内容快照，用于判断未保存修改 */
+  savedSnapshot: string;
+  /** 非激活文档的状态快照；激活文档以顶层状态为准 */
+  snapshot?: DocumentSnapshot;
+}
+
+/** 标注数组序列化缓存（标注数组不可变，可安全按引用缓存） */
+const annotationsSnapshotCache = new WeakMap<Annotation[], string>();
+const cropMaskSnapshotCache = new WeakMap<CropMask, string>();
+
+function serializeAnnotations(annotations: Annotation[]): string {
+  let cached = annotationsSnapshotCache.get(annotations);
+  if (cached === undefined) {
+    cached = JSON.stringify(annotations);
+    annotationsSnapshotCache.set(annotations, cached);
+  }
+  return cached;
+}
+
+function serializeCropMask(cropMask: CropMask | null): string {
+  if (!cropMask) return "null";
+  let cached = cropMaskSnapshotCache.get(cropMask);
+  if (cached === undefined) {
+    cached = JSON.stringify(cropMask);
+    cropMaskSnapshotCache.set(cropMask, cached);
+  }
+  return cached;
+}
+
+/** 文档内容快照（仅比较会写入文件的标注与裁剪信息） */
+function contentSnapshot(annotations: Annotation[], cropMask: CropMask | null): string {
+  return `${serializeAnnotations(annotations)}|${serializeCropMask(cropMask)}`;
+}
+
+/** 采集当前激活文档的状态快照 */
+function snapshotActiveDocument(state: {
+  image: ImageInfo | null;
+  annotations: Annotation[];
+  history: HistoryState[];
+  historyIndex: number;
+  cropMask: CropMask | null;
+  markerCounter: number;
+  viewState: ViewState;
+}): DocumentSnapshot | undefined {
+  if (!state.image) return undefined;
+  return {
+    image: state.image,
+    annotations: JSON.parse(JSON.stringify(state.annotations)),
+    history: JSON.parse(JSON.stringify(state.history)),
+    historyIndex: state.historyIndex,
+    cropMask: state.cropMask ? { ...state.cropMask } : null,
+    markerCounter: state.markerCounter,
+    viewState: { ...state.viewState },
+  };
+}
 
 /**
  * 编辑器状态接口
@@ -94,7 +176,27 @@ const MAX_HISTORY_LENGTH = 50;
 interface EditorState {
   // 图片
   image: ImageInfo | null;
-  setImage: (image: ImageInfo | null) => void;
+
+  // 多文档标签
+  documents: DocumentTab[];
+  activeDocumentId: string | null;
+  /** 当前激活文档最近保存/打开时的内容快照 */
+  savedSnapshot: string;
+  createDocument: (
+    image: ImageInfo,
+    options?: {
+      annotations?: Annotation[];
+      markerCounter?: number;
+      savePath?: string | null;
+    }
+  ) => string;
+  switchDocument: (id: string) => void;
+  closeDocument: (id: string) => void;
+  getActiveDocument: () => DocumentTab | undefined;
+  markDocumentSaved: (path: string) => void;
+  markContentSaved: () => void;
+  isDocumentDirty: (id: string) => boolean;
+  hasUnsavedChanges: () => boolean;
 
   // 当前工具
   currentTool: ToolType;
@@ -126,14 +228,6 @@ interface EditorState {
   canUndo: () => boolean;
   canRedo: () => boolean;
 
-  // 复制到剪贴板时的历史索引（用于判断关闭时是否需要确认保存）
-  lastCopiedHistoryIndex: number | null;
-  setLastCopiedHistoryIndex: (index: number | null) => void;
-  // 复制时的状态快照（用于精确比较）
-  lastCopiedSnapshot: string | null;
-  setLastCopiedSnapshot: () => void;
-  hasChangedSinceCopy: () => boolean;
-
   // 视图状态
   viewState: ViewState;
   setViewState: (state: Partial<ViewState>) => void;
@@ -152,6 +246,7 @@ interface EditorState {
 
   // 序号标记计数器
   markerCounter: number;
+  setMarkerCounter: (value: number) => void;
   incrementMarkerCounter: () => void;
   resetMarkerCounter: () => void;
 
@@ -182,6 +277,10 @@ interface EditorState {
   editingTextId: string | null;
   setEditingTextId: (id: string | null) => void;
 
+  // 正在编辑 CAD 标注文字
+  editingCadTextId: string | null;
+  setEditingCadTextId: (id: string | null) => void;
+
   // 配置
   outputPattern: string;
   setOutputPattern: (pattern: string) => void;
@@ -195,9 +294,182 @@ interface EditorState {
 export const useEditorStore = create<EditorState>((set, get) => ({
   // 图片
   image: null,
-  setImage: (image) => {
-    set({ image, annotations: [], selectedIds: [], history: [], historyIndex: -1 });
-    // 工具栏始终保持横向排列
+
+  // 多文档标签
+  documents: [],
+  activeDocumentId: null,
+  savedSnapshot: "",
+  createDocument: (image, options) => {
+    const state = get();
+    const annotations = options?.annotations
+      ? JSON.parse(JSON.stringify(options.annotations))
+      : [];
+    const markerCounter = Math.max(1, Math.floor(options?.markerCounter ?? 1));
+    const savedSnapshot = contentSnapshot(annotations, null);
+    const id = generateId();
+
+    // 切换前先把当前激活文档的状态快照存入标签
+    const documents = state.activeDocumentId
+      ? state.documents.map((doc) =>
+          doc.id === state.activeDocumentId
+            ? { ...doc, snapshot: snapshotActiveDocument(state), savedSnapshot: state.savedSnapshot }
+            : doc
+        )
+      : state.documents;
+
+    set({
+      documents: [
+        ...documents,
+        {
+          id,
+          title: image.name || "未命名图片",
+          savePath: options?.savePath ?? image.path ?? null,
+          savedSnapshot,
+        },
+      ],
+      activeDocumentId: id,
+      image,
+      annotations,
+      selectedIds: [],
+      history: [],
+      historyIndex: -1,
+      cropArea: null,
+      cropMask: null,
+      markerCounter,
+      viewState: { scale: 1, offsetX: 0, offsetY: 0 },
+      savedSnapshot,
+    });
+    // 以打开时的状态作为历史起点，便于继续撤销/重做
+    get().pushHistory();
+    return id;
+  },
+  switchDocument: (id) => {
+    const state = get();
+    if (state.activeDocumentId === id) return;
+    const target = state.documents.find((doc) => doc.id === id);
+    if (!target?.snapshot) return;
+
+    // 保存当前激活文档快照
+    const documents = state.activeDocumentId
+      ? state.documents.map((doc) =>
+          doc.id === state.activeDocumentId
+            ? { ...doc, snapshot: snapshotActiveDocument(state), savedSnapshot: state.savedSnapshot }
+            : doc
+        )
+      : state.documents;
+
+    const snapshot = target.snapshot;
+    set({
+      documents,
+      activeDocumentId: id,
+      image: snapshot.image,
+      annotations: JSON.parse(JSON.stringify(snapshot.annotations)),
+      selectedIds: [],
+      history: JSON.parse(JSON.stringify(snapshot.history)),
+      historyIndex: snapshot.historyIndex,
+      cropArea: null,
+      cropMask: snapshot.cropMask ? { ...snapshot.cropMask } : null,
+      markerCounter: snapshot.markerCounter,
+      viewState: { ...snapshot.viewState },
+      savedSnapshot: target.savedSnapshot,
+    });
+  },
+  closeDocument: (id) => {
+    const state = get();
+    const index = state.documents.findIndex((doc) => doc.id === id);
+    if (index === -1) return;
+
+    // 关闭非激活标签，直接移除即可
+    if (state.activeDocumentId !== id) {
+      set({ documents: state.documents.filter((doc) => doc.id !== id) });
+      return;
+    }
+
+    const remaining = state.documents.filter((doc) => doc.id !== id);
+    if (remaining.length === 0) {
+      set({
+        documents: [],
+        activeDocumentId: null,
+        image: null,
+        annotations: [],
+        selectedIds: [],
+        history: [],
+        historyIndex: -1,
+        cropArea: null,
+        cropMask: null,
+        markerCounter: 1,
+        viewState: { scale: 1, offsetX: 0, offsetY: 0 },
+        savedSnapshot: "",
+      });
+      return;
+    }
+
+    // 激活相邻标签（优先左侧）
+    const next = remaining[Math.min(index, remaining.length - 1)];
+    const snapshot = next.snapshot;
+    if (!snapshot) return;
+    set({
+      documents: remaining,
+      activeDocumentId: next.id,
+      image: snapshot.image,
+      annotations: JSON.parse(JSON.stringify(snapshot.annotations)),
+      selectedIds: [],
+      history: JSON.parse(JSON.stringify(snapshot.history)),
+      historyIndex: snapshot.historyIndex,
+      cropArea: null,
+      cropMask: snapshot.cropMask ? { ...snapshot.cropMask } : null,
+      markerCounter: snapshot.markerCounter,
+      viewState: { ...snapshot.viewState },
+      savedSnapshot: next.savedSnapshot,
+    });
+  },
+  getActiveDocument: () => {
+    const state = get();
+    return state.documents.find((doc) => doc.id === state.activeDocumentId);
+  },
+  markDocumentSaved: (path) => {
+    const state = get();
+    const savedSnapshot = contentSnapshot(state.annotations, state.cropMask);
+    set({
+      image: state.image ? { ...state.image, path } : null,
+      savedSnapshot,
+      documents: state.documents.map((doc) =>
+        doc.id === state.activeDocumentId ? { ...doc, savePath: path, savedSnapshot } : doc
+      ),
+    });
+  },
+  markContentSaved: () => {
+    const state = get();
+    const savedSnapshot = contentSnapshot(state.annotations, state.cropMask);
+    set({
+      savedSnapshot,
+      documents: state.documents.map((doc) =>
+        doc.id === state.activeDocumentId ? { ...doc, savedSnapshot } : doc
+      ),
+    });
+  },
+  isDocumentDirty: (id) => {
+    const state = get();
+    if (id === state.activeDocumentId) {
+      return contentSnapshot(state.annotations, state.cropMask) !== state.savedSnapshot;
+    }
+    const doc = state.documents.find((item) => item.id === id);
+    if (!doc?.snapshot) return false;
+    return contentSnapshot(doc.snapshot.annotations, doc.snapshot.cropMask) !== doc.savedSnapshot;
+  },
+  hasUnsavedChanges: () => {
+    const state = get();
+    if (
+      state.activeDocumentId &&
+      contentSnapshot(state.annotations, state.cropMask) !== state.savedSnapshot
+    ) {
+      return true;
+    }
+    return state.documents.some((doc) =>
+      doc.id !== state.activeDocumentId && doc.snapshot
+        ? contentSnapshot(doc.snapshot.annotations, doc.snapshot.cropMask) !== doc.savedSnapshot
+        : false
+    );
   },
 
   // 当前工具
@@ -213,18 +485,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // 工具配置
   toolConfig: defaultToolConfig,
   setToolConfig: (config) => {
-    const hasTextPatch = hasTextToolConfigPatch(config);
-    const patchKeys = Object.keys(config) as Array<keyof ToolConfig>;
-    const isOnlyStrokeColorPatch = patchKeys.length === 1 && patchKeys[0] === "strokeColor";
     set((state) => ({
       toolConfig: { ...state.toolConfig, ...config },
     }));
-    const shouldPersistTextConfig =
-      hasTextPatch && (!isOnlyStrokeColorPatch || get().currentTool === "text");
-    // Don't persist when fontFamily is cleared (dropdown open action)
-    if (shouldPersistTextConfig && config.fontFamily !== "") {
-      get().saveConfig();
-    }
+    // 字体下拉展开时会清空 fontFamily，此时不写入配置
+    if (config.fontFamily === "") return;
+    // 修改任意工具样式后自动保存到配置文件
+    scheduleToolConfigSave(() => get().saveConfig());
   },
 
   // 标注对象
@@ -321,25 +588,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   canUndo: () => get().historyIndex >= 0,
   canRedo: () => get().historyIndex < get().history.length - 1,
 
-  // 复制到剪贴板时的历史索引
-  lastCopiedHistoryIndex: null,
-  setLastCopiedHistoryIndex: (index) => set({ lastCopiedHistoryIndex: index }),
-  // 复制时的状态快照
-  lastCopiedSnapshot: null,
-  setLastCopiedSnapshot: () => {
-    const { annotations, cropMask } = get();
-    const snapshot = JSON.stringify({ annotations, cropMask });
-    set({ lastCopiedSnapshot: snapshot });
-  },
-  hasChangedSinceCopy: () => {
-    const { lastCopiedSnapshot, annotations, cropMask } = get();
-    // 如果从未复制过，则认为有改动
-    if (lastCopiedSnapshot === null) return true;
-    // 比较当前状态与复制时的快照
-    const currentSnapshot = JSON.stringify({ annotations, cropMask });
-    return currentSnapshot !== lastCopiedSnapshot;
-  },
-
   // 视图状态
   viewState: {
     scale: 1,
@@ -371,6 +619,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   // 序号标记计数器
   markerCounter: 1,
+  setMarkerCounter: (value) =>
+    set({ markerCounter: Math.max(1, Math.floor(value)) }),
   incrementMarkerCounter: () =>
     set((state) => ({ markerCounter: state.markerCounter + 1 })),
   resetMarkerCounter: () => set({ markerCounter: 1 }),
@@ -389,9 +639,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const fonts = await invoke<string[]>("list_system_fonts");
       set({ systemFonts: fonts });
-    } catch (error) {
-      console.error("加载系统字体失败:", error);
-    }
+    } catch {}
   },
 
   // 白板配置
@@ -433,6 +681,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   editingTextId: null,
   setEditingTextId: (id) => set({ editingTextId: id }),
 
+  // 正在编辑 CAD 标注文字
+  editingCadTextId: null,
+  setEditingCadTextId: (id) => set({ editingCadTextId: id }),
+
   // 配置
   outputPattern: "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png",
   setOutputPattern: (pattern) => {
@@ -444,6 +696,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const config = await invoke<AppConfig>("get_config");
       const currentToolConfig = get().toolConfig;
+      const persistedToolConfig = config.tool_config ?? {};
       const persistedTextToolConfig = config.text_tool_config;
       set({ 
         theme: config.theme, 
@@ -451,6 +704,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         customActions: config.custom_actions,
         toolConfig: {
           ...currentToolConfig,
+          ...persistedToolConfig,
           ...(persistedTextToolConfig?.stroke_color !== undefined
             ? { strokeColor: persistedTextToolConfig.stroke_color }
             : {}),
@@ -494,9 +748,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           root.classList.remove("dark");
         }
       }
-    } catch (error) {
-      console.error("加载配置失败:", error);
-    }
+    } catch {}
   },
 
   saveConfig: async () => {
@@ -508,11 +760,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           output_pattern: outputPattern,
           custom_actions: customActions,
           text_tool_config: serializeTextToolConfig(toolConfig),
+          tool_config: toolConfig,
         }
       });
-    } catch (error) {
-      console.error("保存配置失败:", error);
-    }
+    } catch {}
   },
 }));
 
@@ -630,6 +881,24 @@ export function createAnnotation(
       };
       return extra ? { ...marker, ...extra } as Annotation : marker;
     }
+    case "callout": {
+      const callout: Annotation = {
+        ...baseProps,
+        type: "callout" as const,
+        value: 1,
+        targetX: 0,
+        targetY: 0,
+        markerStyle: config.markerStyle,
+        markerType: config.markerType,
+        size: config.markerSize,
+        fill: config.strokeColor,
+        textColor: "#ffffff",
+        strokeWidth: config.strokeWidth,
+        lineStyle: config.lineStyle,
+        arrowStyle: config.arrowStyle,
+      };
+      return extra ? { ...callout, ...extra } as Annotation : callout;
+    }
     case "blur": {
       const blur: Annotation = {
         ...baseProps,
@@ -658,6 +927,107 @@ export function createAnnotation(
         scale: config.magnifierScale,
       };
       return extra ? { ...magnifier, ...extra } as Annotation : magnifier;
+    }
+    case "dim_linear": {
+      const dim: Annotation = {
+        ...baseProps,
+        type: "dim_linear" as const,
+        p2x: 0,
+        p2y: 0,
+        placeX: 0,
+        placeY: 0,
+        mode: config.dimMode,
+        termination: config.dimTermination,
+        textPosition: config.dimTextPosition,
+        showExtension: config.showExtensionLines,
+        text: "",
+        stroke: config.strokeColor,
+        strokeWidth: config.cadStrokeWidth,
+        fontSize: config.fontSize,
+        fontFamily: config.fontFamily,
+      };
+      return extra ? { ...dim, ...extra } as Annotation : dim;
+    }
+    case "dim_angular": {
+      const dim: Annotation = {
+        ...baseProps,
+        type: "dim_angular" as const,
+        ax: 0,
+        ay: 0,
+        bx: 0,
+        by: 0,
+        arcRadius: 40,
+        text: "",
+        stroke: config.strokeColor,
+        strokeWidth: config.cadStrokeWidth,
+        fontSize: config.fontSize,
+        fontFamily: config.fontFamily,
+      };
+      return extra ? { ...dim, ...extra } as Annotation : dim;
+    }
+    case "dim_radial": {
+      const dim: Annotation = {
+        ...baseProps,
+        type: "dim_radial" as const,
+        ex: 0,
+        ey: 0,
+        kind: config.radialKind,
+        text: "",
+        termination: config.dimTermination,
+        stroke: config.strokeColor,
+        strokeWidth: config.cadStrokeWidth,
+        fontSize: config.fontSize,
+        fontFamily: config.fontFamily,
+      };
+      return extra ? { ...dim, ...extra } as Annotation : dim;
+    }
+    case "center_mark": {
+      const mark: Annotation = {
+        ...baseProps,
+        type: "center_mark" as const,
+        size: config.markerSize,
+        stroke: config.strokeColor,
+        strokeWidth: config.cadStrokeWidth,
+        fontSize: config.fontSize,
+        fontFamily: config.fontFamily,
+      };
+      return extra ? { ...mark, ...extra } as Annotation : mark;
+    }
+    case "leader": {
+      const leader: Annotation = {
+        ...baseProps,
+        type: "leader" as const,
+        elbowX: 0,
+        elbowY: 0,
+        shelfDir: 1 as const,
+        shelfLength: 60,
+        text: "",
+        termination: config.dimTermination,
+        stroke: config.strokeColor,
+        strokeWidth: config.cadStrokeWidth,
+        fontSize: config.fontSize,
+        fontFamily: config.fontFamily,
+      };
+      return extra ? { ...leader, ...extra } as Annotation : leader;
+    }
+    case "balloon": {
+      const balloon: Annotation = {
+        ...baseProps,
+        type: "balloon" as const,
+        value: 1,
+        shape: config.balloonShape,
+        targetX: 0,
+        targetY: 0,
+        termination: config.dimTermination,
+        size: config.markerSize,
+        background: "#ffffff",
+        textColor: config.strokeColor,
+        stroke: config.strokeColor,
+        strokeWidth: config.cadStrokeWidth,
+        fontSize: config.fontSize,
+        fontFamily: config.fontFamily,
+      };
+      return extra ? { ...balloon, ...extra } as Annotation : balloon;
     }
     default:
       throw new Error(`未知的标注类型: ${type}`);

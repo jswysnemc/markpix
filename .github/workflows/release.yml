@@ -20,9 +20,7 @@ jobs:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
           - platform: macos-latest
-            target: aarch64-apple-darwin
-          - platform: macos-latest
-            target: x86_64-apple-darwin
+            target: universal-apple-darwin
 
     runs-on: ${{ matrix.platform }}
 
@@ -33,16 +31,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
+          cache: npm
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -51,7 +45,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install dependencies
-        run: pnpm install
+        run: npm ci
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -61,7 +55,21 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'MarkPix ${{ github.ref_name }}'
           releaseBody: |
-            See the assets below for download links.
+            ## MarkPix ${{ github.ref_name }}
+
+            基于 [jswysnemc/markpix](https://github.com/jswysnemc/markpix)（MIT License）修改。
+
+            ### 主要修改
+            - 修订光标颜色为红色
+            - 增加纯白方框外框（近白色矩形辅助框，编辑时可见、导出跳过）
+            - 新增引导序号（序号圆形 + 箭头，CAD 风格），可自定义起始序号、线宽、箭头样式
+            - 保存 / 另存为拆分；所有工具样式自动保存
+            - macOS 通用构建（Apple 芯片 + Intel 合一 dmg）
+
+            ### 下载
+            下方 Assets 包含 Windows 安装包（.msi / .exe）、macOS 通用 dmg、Linux AppImage。
+
+            > macOS 未签名，首次打开请右键应用 → 选择"打开"。
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}

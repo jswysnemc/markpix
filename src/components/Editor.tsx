@@ -7,6 +7,8 @@ import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useEditorStore } from "@/store/editorStore";
 import { AnnotationCanvas } from "./canvas/AnnotationCanvas";
 import { Toolbar, FloatingToolConfig } from "./toolbar/Toolbar";
+import { DocumentTabs } from "./toolbar/DocumentTabs";
+import { EngineeringRail, ToolRail } from "./toolbar/ToolRail";
 import { CustomActionsPanel } from "./CustomActionsPanel";
 import { SettingsDialog } from "./SettingsDialog";
 import { ColorPicker } from "@/components/ui/ColorPicker";
@@ -16,6 +18,8 @@ import type {
   CropArea,
   CustomAction,
   ImageInfo,
+  MarkpixFileMeta,
+  MarkpixFilePayload,
   WhiteboardConfig,
   WhiteboardTexture,
 } from "@/types";
@@ -118,6 +122,19 @@ function getAnnotationBounds(annotation: Annotation): AnnotationBounds {
         maxY: annotation.y + r,
       };
     }
+    case "callout": {
+      const r = annotation.size / 2;
+      const minX = Math.min(-r, annotation.targetX);
+      const minY = Math.min(-r, annotation.targetY);
+      const maxX = Math.max(r, annotation.targetX);
+      const maxY = Math.max(r, annotation.targetY);
+      return {
+        minX: annotation.x + minX,
+        minY: annotation.y + minY,
+        maxX: annotation.x + maxX,
+        maxY: annotation.y + maxY,
+      };
+    }
     case "magnifier": {
       const targetBounds = {
         minX: annotation.x - annotation.targetRadius,
@@ -201,7 +218,6 @@ export function Editor() {
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [showSettings, setShowSettings] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
-  const [showOpenConfirm, setShowOpenConfirm] = useState(false);
   const [showWhiteboardDialog, setShowWhiteboardDialog] = useState(false);
   const [whiteboardDraft, setWhiteboardDraft] = useState<WhiteboardConfig>(
     useEditorStore.getState().whiteboardConfig
@@ -211,9 +227,16 @@ export function Editor() {
   const [isDragging, setIsDragging] = useState(false);
   const [isFullscreenMode, setIsFullscreenMode] = useState(false);
 
+  // 显示无侵入式提示
+  const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 2000);
+  }, []);
+
   const {
     image,
-    setImage,
+    documents,
+    createDocument,
     setCustomActions,
     currentTool,
     setCurrentTool,
@@ -229,8 +252,10 @@ export function Editor() {
     annotations,
     outputPattern,
     viewState,
-    setLastCopiedSnapshot,
-    hasChangedSinceCopy,
+    markContentSaved,
+    markDocumentSaved,
+    getActiveDocument,
+    hasUnsavedChanges,
     setWhiteboardConfig,
   } = useEditorStore();
 
@@ -279,9 +304,7 @@ export function Editor() {
         if (mounted) {
           setIsFullscreenMode(maximized);
         }
-      } catch (error) {
-        console.error("读取最大化状态失败:", error);
-      }
+      } catch {}
     };
 
     void syncFullscreenState();
@@ -293,9 +316,7 @@ export function Editor() {
       .then((fn) => {
         unlisten = fn;
       })
-      .catch((error) => {
-        console.error("监听窗口尺寸变化失败:", error);
-      });
+      .catch(() => {});
 
     return () => {
       mounted = false;
@@ -371,9 +392,7 @@ export function Editor() {
         if (cliPattern) {
           setCliOutputPattern(cliPattern);
         }
-      } catch (error) {
-        console.error("初始化失败:", error);
-      }
+      } catch {}
     };
 
     init();
@@ -400,44 +419,79 @@ export function Editor() {
       
       // 居中窗口
       await appWindow.center();
-    } catch (error) {
-      console.error("调整窗口大小失败:", error);
-    }
+    } catch {}
   }, []);
 
-  // 从路径加载图片
+  // 从路径加载图片（若文件内嵌了 MarkPix 标注，则一并恢复）
   const loadImageFromPath = async (path: string) => {
     try {
       const dataUrl = await invoke<string>("read_image_file", { path });
+      const payload = await readMarkpixPayload(path);
+      const restored = getRestorableMeta(payload);
+      // 有内嵌背景图时用背景图作为底图，否则使用保存时的扁平图
+      const backgroundUrl = restored ? payload!.base! : dataUrl;
+
       const img = new Image();
       img.onload = async () => {
         const imageInfo: ImageInfo = {
-          src: dataUrl,
+          src: backgroundUrl,
           width: img.width,
           height: img.height,
           name: path.split(/[\\/]/).pop(),
           path: path,
         };
-        setImage(imageInfo);
-        
+
+        if (restored) {
+          createDocument(imageInfo, {
+            annotations: restored.annotations,
+            markerCounter: restored.markerCounter,
+            savePath: path,
+          });
+          showToast(`已恢复 ${restored.annotations.length} 个标注，可继续编辑`);
+        } else {
+          createDocument(imageInfo, { savePath: path });
+        }
+
         // 自动调整窗口大小
         await adjustWindowSize(img.width, img.height);
       };
-      img.src = dataUrl;
+      img.src = backgroundUrl;
     } catch (error) {
-      console.error("加载图片失败:", error);
       alert(`加载图片失败: ${error}`);
     }
   };
 
-  // 打开文件
-  const handleOpenFile = async () => {
-    // 如果当前有图片，先询问是否保存
-    if (image) {
-      setShowOpenConfirm(true);
-    } else {
-      await doOpenFile();
+  // 读取文件内嵌的 MarkPix 标注数据（非 MarkPix 文件返回 null）
+  const readMarkpixPayload = async (path: string): Promise<MarkpixFilePayload | null> => {
+    try {
+      return await invoke<MarkpixFilePayload | null>("read_markpix_meta", { path });
+    } catch {
+      return null;
     }
+  };
+
+  // 解析标注元数据，缺少内嵌背景图时无法安全恢复，返回 null
+  const getRestorableMeta = (payload: MarkpixFilePayload | null): MarkpixFileMeta | null => {
+    if (!payload?.base) return null;
+    try {
+      const meta = JSON.parse(payload.meta) as MarkpixFileMeta;
+      if (
+        meta?.app !== "markpix" ||
+        !Array.isArray(meta.annotations) ||
+        !Number.isFinite(meta.imageWidth) ||
+        !Number.isFinite(meta.imageHeight)
+      ) {
+        return null;
+      }
+      return meta;
+    } catch {
+      return null;
+    }
+  };
+
+  // 打开文件 - 作为新标签打开，不影响当前文档
+  const handleOpenFile = async () => {
+    await doOpenFile();
   };
 
   // 实际执行打开文件
@@ -454,25 +508,14 @@ export function Editor() {
       });
 
       if (selected) {
-        // 清除当前状态
-        useEditorStore.getState().clearAnnotations();
-        useEditorStore.getState().setCropMask(null);
-        useEditorStore.getState().resetMarkerCounter();
         await loadImageFromPath(selected);
       }
-    } catch (error) {
-      console.error("打开文件失败:", error);
-    }
+    } catch {}
   };
 
-  // 确认打开新文件（不保存当前）
-  const handleConfirmOpen = useCallback(async () => {
-    setShowOpenConfirm(false);
-    await doOpenFile();
-  }, []);
-
   // 获取画布数据 URL（应用裁剪蒙版，保持原始图片大小）
-  const getCanvasDataUrl = useCallback(async (): Promise<string | null> => {
+  // includeAnnotations=false 时只导出背景（用作可继续编辑的底图）
+  const getCanvasDataUrl = useCallback(async (includeAnnotations = true): Promise<string | null> => {
     if (!image) return null;
     
     // 查找 Konva Stage
@@ -521,19 +564,24 @@ export function Editor() {
         offscreenLayer.add(konvaImg);
 
         // 复制所有标注到离屏 Layer（原始坐标，应用裁剪偏移）
-        const annotationGroup = stage.findOne(".annotations-group") as Konva.Group;
-        if (annotationGroup) {
-          annotationGroup.children?.forEach((child) => {
-            if (child.name() !== "background-image") {
-              const clone = child.clone();
-              // 重置缩放，应用裁剪偏移
-              clone.scaleX(1);
-              clone.scaleY(1);
-              clone.x(clone.x() - exportX);
-              clone.y(clone.y() - exportY);
-              offscreenLayer.add(clone);
-            }
-          });
+        if (includeAnnotations) {
+          const annotationGroup = stage.findOne(".annotations-group") as Konva.Group;
+          if (annotationGroup) {
+            annotationGroup.children?.forEach((child) => {
+              if (
+                child.name() !== "background-image" &&
+                !child.name().startsWith("guide-")
+              ) {
+                const clone = child.clone();
+                // 重置缩放，应用裁剪偏移
+                clone.scaleX(1);
+                clone.scaleY(1);
+                clone.x(clone.x() - exportX);
+                clone.y(clone.y() - exportY);
+                offscreenLayer.add(clone);
+              }
+            });
+          }
         }
 
         offscreenLayer.draw();
@@ -554,8 +602,76 @@ export function Editor() {
     });
   }, [cropMask, image, annotations]);
 
-  // 保存文件
-  const handleSave = async () => {
+  // 生成可继续编辑的标注元数据（坐标已按保存时的裁剪偏移转换）
+  const buildMarkpixMeta = useCallback((): string => {
+    const { annotations: currentAnnotations, markerCounter } = useEditorStore.getState();
+    if (!image) return "";
+    const exportX = cropMask ? cropMask.x : 0;
+    const exportY = cropMask ? cropMask.y : 0;
+    const exportWidth = cropMask ? cropMask.width : image.width;
+    const exportHeight = cropMask ? cropMask.height : image.height;
+
+    const meta: MarkpixFileMeta = {
+      app: "markpix",
+      version: 1,
+      createdAt: Date.now(),
+      imageWidth: exportWidth,
+      imageHeight: exportHeight,
+      markerCounter,
+      annotations: currentAnnotations.map((annotation) =>
+        shiftAnnotationAfterDirectCrop(annotation, {
+          x: exportX,
+          y: exportY,
+          width: exportWidth,
+          height: exportHeight,
+        })
+      ),
+    };
+    return JSON.stringify(meta);
+  }, [image, cropMask]);
+
+  // 保存到指定路径：PNG 内嵌标注数据，便于之后重新打开继续编辑
+  const saveToPath = useCallback(async (targetPath: string, dataUrl: string) => {
+    const isPng = /\.png$/i.test(targetPath);
+    if (!isPng) {
+      await invoke("save_image_file", { path: targetPath, data: dataUrl });
+      markDocumentSaved(targetPath);
+      showToast("已保存（非 PNG 格式无法保留可编辑标注）");
+      return;
+    }
+
+    // 仅背景图作为底图，标注以 JSON 形式单独存储
+    const baseDataUrl = await getCanvasDataUrl(false);
+    const meta = buildMarkpixMeta();
+    await invoke("save_image_file", {
+      path: targetPath,
+      data: dataUrl,
+      base: baseDataUrl,
+      meta,
+    });
+    markDocumentSaved(targetPath);
+    showToast("保存成功，可继续编辑标注");
+  }, [getCanvasDataUrl, buildMarkpixMeta, markDocumentSaved, showToast]);
+
+  // 生成保存对话框默认文件名，根据配置的模式
+  const getSaveDefaultName = useCallback(() => {
+    if (!image) return "image.png";
+    const baseName = image.name?.replace(/\.[^.]+$/, "") || "image";
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const timestamp = `${now.getFullYear()}_${pad(now.getMonth() + 1)}_${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+
+    // CLI 参数优先于配置
+    let defaultName = cliOutputPattern || outputPattern || "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png";
+    defaultName = defaultName
+      .replace(/{input_file_base}/g, baseName)
+      .replace(/{input_file}/g, image.path || image.name || "")
+      .replace(/{YYYY_MM_DD-hh-mm-ss}/g, timestamp);
+    return defaultName;
+  }, [image, cliOutputPattern, outputPattern]);
+
+  // 另存为（总是弹出保存对话框）
+  const handleSaveAs = useCallback(async () => {
     if (!image) return;
 
     try {
@@ -565,21 +681,8 @@ export function Editor() {
         return;
       }
 
-      // 生成默认文件名，根据配置的模式
-      const baseName = image.name?.replace(/\.[^.]+$/, "") || "image";
-      const now = new Date();
-      const pad = (n: number) => n.toString().padStart(2, "0");
-      const timestamp = `${now.getFullYear()}_${pad(now.getMonth() + 1)}_${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-
-      // CLI 参数优先于配置
-      let defaultName = cliOutputPattern || outputPattern || "{input_file_base}_{YYYY_MM_DD-hh-mm-ss}_markpix.png";
-      defaultName = defaultName
-        .replace(/{input_file_base}/g, baseName)
-        .replace(/{input_file}/g, image.path || image.name || "")
-        .replace(/{YYYY_MM_DD-hh-mm-ss}/g, timestamp);
-
       const filePath = await save({
-        defaultPath: defaultName,
+        defaultPath: getSaveDefaultName(),
         filters: [
           { name: "PNG", extensions: ["png"] },
           { name: "JPEG", extensions: ["jpg", "jpeg"] },
@@ -587,21 +690,34 @@ export function Editor() {
       });
 
       if (filePath) {
-        await invoke("save_image_file", { path: filePath, data: dataUrl });
-        showToast("保存成功");
+        await saveToPath(filePath, dataUrl);
       }
     } catch (error) {
-      console.error("保存失败:", error);
       showToast(`保存失败: ${error}`, "error");
     }
-  };
+  }, [image, getCanvasDataUrl, getSaveDefaultName, saveToPath, showToast]);
 
-  // 保存当前并打开新文件
-  const handleSaveAndOpen = useCallback(async () => {
-    setShowOpenConfirm(false);
-    await handleSave();
-    await doOpenFile();
-  }, []);
+  // 保存（直接覆盖当前文件；无路径时回退到另存为）
+  const handleSave = useCallback(async () => {
+    if (!image) return;
+
+    try {
+      const dataUrl = await getCanvasDataUrl();
+      if (!dataUrl) {
+        showToast("无法获取画布数据", "error");
+        return;
+      }
+
+      const targetPath = getActiveDocument()?.savePath || image.path;
+      if (targetPath) {
+        await saveToPath(targetPath, dataUrl);
+      } else {
+        await handleSaveAs();
+      }
+    } catch (error) {
+      showToast(`保存失败: ${error}`, "error");
+    }
+  }, [image, getActiveDocument, getCanvasDataUrl, handleSaveAs, saveToPath, showToast]);
 
   // 插入图片（作为贴图）
   const handleInsertImage = async () => {
@@ -644,23 +760,14 @@ export function Editor() {
         addAnnotation(imageAnnotation);
         pushHistory();
       }
-    } catch (error) {
-      console.error("插入图片失败:", error);
-    }
+    } catch {}
   };
 
-  // 显示无侵入式提示
-  const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 2000);
-  }, []);
-
   const handleOpenWhiteboardDialog = useCallback(() => {
-    if (image) return;
     const currentConfig = useEditorStore.getState().whiteboardConfig;
     setWhiteboardDraft({ ...currentConfig });
     setShowWhiteboardDialog(true);
-  }, [image]);
+  }, []);
 
   const updateWhiteboardDraft = (patch: Partial<WhiteboardConfig>) => {
     setWhiteboardDraft((prev) => ({ ...prev, ...patch }));
@@ -668,8 +775,6 @@ export function Editor() {
 
   const handleCreateBlank = useCallback(
     async (config: WhiteboardConfig) => {
-      if (image) return;
-
       const fallbackWidth = 1280;
       const fallbackHeight = 720;
       const width = Math.max(
@@ -754,7 +859,7 @@ export function Editor() {
         name: "whiteboard.png",
       };
 
-      setImage(imageInfo);
+      createDocument(imageInfo);
       setWhiteboardConfig({
         width,
         height,
@@ -764,7 +869,7 @@ export function Editor() {
       await adjustWindowSize(width, height);
       showToast("已创建白板");
     },
-    [image, containerSize, setImage, adjustWindowSize, showToast, setWhiteboardConfig]
+    [containerSize, createDocument, adjustWindowSize, showToast, setWhiteboardConfig]
   );
 
   // 复制到剪贴板 - 直接从内存复制，无需临时文件
@@ -781,25 +886,24 @@ export function Editor() {
       // 提取 base64 数据并直接复制
       const base64Data = dataUrl.split(",")[1];
       await invoke("copy_image_data_to_clipboard", { data: base64Data });
-      // 记录复制时的状态快照
-      setLastCopiedSnapshot();
+      // 复制即视为已获得当前结果，关闭时不再提示保存
+      markContentSaved();
       showToast("已复制到剪贴板");
     } catch (error) {
-      console.error("复制失败:", error);
       showToast(`复制失败: ${error}`, "error");
     }
   };
 
   // 关闭窗口处理
   const handleClose = useCallback(async () => {
-    // 如果有图片且复制后有改动，显示确认对话框
-    if (image && hasChangedSinceCopy()) {
+    // 任一标签有未保存的修改时，显示确认对话框
+    if (hasUnsavedChanges()) {
       setShowCloseConfirm(true);
     } else {
-      // 没有图片或复制后无改动，直接关闭
+      // 没有未保存修改，直接关闭
       await invoke("exit_app");
     }
-  }, [image, hasChangedSinceCopy]);
+  }, [hasUnsavedChanges]);
 
   // 确认关闭（不保存）
   const handleConfirmClose = useCallback(async () => {
@@ -911,7 +1015,6 @@ export function Editor() {
       viewState: { scale: nextScale, offsetX: nextOffsetX, offsetY: nextOffsetY },
       history: [],
       historyIndex: -1,
-      lastCopiedSnapshot: null,
     });
 
     const removedCount = annotations.length - nextAnnotations.length;
@@ -973,17 +1076,15 @@ export function Editor() {
               height: size.height,
               name: "clipboard-image.png",
             };
-            setImage(imageInfo);
-            
+            createDocument(imageInfo);
+
             // 自动调整窗口大小
             await adjustWindowSize(size.width, size.height);
           }
         }
       }
-    } catch (error) {
-      console.error("粘贴失败:", error);
-    }
-  }, [image, setImage, adjustWindowSize]);
+    } catch {}
+  }, [image, createDocument, adjustWindowSize]);
 
   const isSupportedImageFile = useCallback((nameOrPath: string) => {
     return /\.(png|jpe?g|gif|webp|bmp)$/i.test(nameOrPath);
@@ -1024,11 +1125,11 @@ export function Editor() {
         name,
         path,
       };
-      setImage(imageInfo);
+      createDocument(imageInfo, { savePath: path ?? null });
       await adjustWindowSize(width, height);
       showToast("背景图片已加载");
     }
-  }, [setImage, adjustWindowSize, getImageInsertPosition, showToast]);
+  }, [createDocument, adjustWindowSize, getImageInsertPosition, showToast]);
 
   const loadDroppedImageFromPath = useCallback(async (path: string) => {
     if (!isSupportedImageFile(path)) {
@@ -1038,6 +1139,39 @@ export function Editor() {
 
     try {
       const dataUrl = await invoke<string>("read_image_file", { path });
+      // 当前没有图片时，若是 MarkPix 文件则恢复原有标注
+      const hasImage = useEditorStore.getState().image !== null;
+      if (!hasImage) {
+        const payload = await readMarkpixPayload(path);
+        const restored = getRestorableMeta(payload);
+        if (restored) {
+          const backgroundUrl = payload!.base!;
+          const img = new Image();
+          img.onload = async () => {
+            const fileName = path.split(/[\\/]/).pop() || "image";
+            const imageInfo: ImageInfo = {
+              src: backgroundUrl,
+              width: img.width,
+              height: img.height,
+              name: fileName,
+              path,
+            };
+            createDocument(imageInfo, {
+              annotations: restored.annotations,
+              markerCounter: restored.markerCounter,
+              savePath: path,
+            });
+            await adjustWindowSize(img.width, img.height);
+            showToast(`已恢复 ${restored.annotations.length} 个标注，可继续编辑`);
+          };
+          img.onerror = () => {
+            showToast("加载图片失败", "error");
+          };
+          img.src = backgroundUrl;
+          return;
+        }
+      }
+
       const img = new Image();
       img.onload = () => {
         const fileName = path.split(/[\\/]/).pop() || "image";
@@ -1047,11 +1181,18 @@ export function Editor() {
         showToast("加载图片失败", "error");
       };
       img.src = dataUrl;
-    } catch (error) {
-      console.error("读取拖入图片失败:", error);
+    } catch {
       showToast("加载图片失败", "error");
     }
-  }, [applyDroppedImage, isSupportedImageFile, showToast]);
+  }, [
+    applyDroppedImage,
+    createDocument,
+    isSupportedImageFile,
+    readMarkpixPayload,
+    getRestorableMeta,
+    adjustWindowSize,
+    showToast,
+  ]);
 
   // 更新 ref 以便在事件监听器中使用最新的函数
   loadDroppedImageRef.current = loadDroppedImageFromPath;
@@ -1104,9 +1245,7 @@ export function Editor() {
             }
           }
         });
-      } catch (error) {
-        console.error("监听拖拽事件失败:", error);
-      }
+      } catch {}
     };
 
     setupDragDropListener();
@@ -1159,9 +1298,7 @@ export function Editor() {
         e.preventDefault();
 
         // 调用 Rust 后端命令打开开发者工具
-        import("@tauri-apps/api/core").then(({ invoke }) => {
-          invoke("open_devtools").catch(console.error);
-        });
+        invoke("open_devtools").catch(() => {});
         return;
       }
 
@@ -1192,9 +1329,16 @@ export function Editor() {
         t: "text",
         b: "brush",
         m: "marker",
+        n: "callout",
         u: "blur",
         c: "crop",
         z: "magnifier",
+        d: "dim_linear",
+        g: "dim_angular",
+        y: "dim_radial",
+        k: "center_mark",
+        f: "leader",
+        j: "balloon",
       };
 
       if (!e.ctrlKey && !e.altKey && toolKeys[e.key.toLowerCase()]) {
@@ -1231,131 +1375,151 @@ export function Editor() {
         onOpenFile={handleOpenFile}
         onCreateBlank={handleOpenWhiteboardDialog}
         onSave={handleSave}
+        onSaveAs={handleSaveAs}
         onCopy={handleCopy}
         onOpenSettings={() => setShowSettings(true)}
         onClose={handleClose}
-        onInsertImage={handleInsertImage}
         onOpenCustomActions={() => setShowCustomActions(!showCustomActions)}
         isFullscreenMode={isFullscreenMode}
       />
-      
-      {/* 画布区域 - 顶部留出工具栏空间 */}
-      <div ref={containerRef} className={isFullscreenMode ? "relative mt-14 flex-1 overflow-hidden" : "relative mt-10 flex-1 overflow-hidden"}>
-        {/* 拖拽提示遮罩 */}
-        {isDragging && (
-          <div className="absolute inset-0 z-50 bg-blue-500/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
-            <div className="text-2xl font-semibold text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 px-8 py-4 rounded-xl shadow-2xl border-2 border-blue-500 border-dashed">
-              拖入图片
+
+      {/* 文档标签栏 */}
+      {documents.length > 0 && (
+        <div className="mt-10 shrink-0">
+          <DocumentTabs onOpenFile={handleOpenFile} />
+        </div>
+      )}
+
+      {/* 工作区：左侧工具列 + 画布 + 右侧工具列 */}
+      <div
+        className={`flex flex-1 overflow-hidden ${
+          documents.length > 0 ? "" : "mt-10"
+        }`}
+      >
+        {/* 左侧竖向工具栏：常用标注工具 */}
+        <ToolRail onInsertImage={handleInsertImage} />
+
+        {/* 画布区域 */}
+        <div ref={containerRef} className="relative flex-1 overflow-hidden">
+          {/* 拖拽提示遮罩 */}
+          {isDragging && (
+            <div className="absolute inset-0 z-50 bg-blue-500/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+              <div className="text-2xl font-semibold text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 px-8 py-4 rounded-xl shadow-2xl border-2 border-blue-500 border-dashed">
+                拖入图片
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {containerSize.width > 0 && containerSize.height > 0 && (
-          <AnnotationCanvas
-            containerWidth={containerSize.width}
-            containerHeight={Math.max(containerSize.height - (isFullscreenMode ? 8 : 40), 0)}
-          />
-        )}
+          {containerSize.width > 0 && containerSize.height > 0 && (
+            <AnnotationCanvas
+              containerWidth={containerSize.width}
+              containerHeight={Math.max(containerSize.height - (isFullscreenMode ? 8 : 40), 0)}
+            />
+          )}
 
-        {/* 工具配置面板 */}
-        <FloatingToolConfig />
+          {/* 工具配置面板 */}
+          <FloatingToolConfig />
 
-        {/* 自定义动作面板 */}
-        {showCustomActions && image && (
-          <CustomActionsPanel getCanvasDataUrl={getCanvasDataUrl} imagePath={image?.path} />
-        )}
+          {/* 自定义动作面板 */}
+          {showCustomActions && image && (
+            <CustomActionsPanel getCanvasDataUrl={getCanvasDataUrl} imagePath={image?.path} />
+          )}
 
-        {/* 欢迎提示 */}
-        {!image && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center text-muted-foreground max-w-lg">
-              <p className="text-xl font-medium mb-4">欢迎使用 MarkPix</p>
-              <p className="text-sm mb-6 flex items-center justify-center gap-1">
-                点击工具栏的 <FolderOpen size={16} className="inline" /> 打开图片，或按 <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Ctrl+V</kbd> 粘贴剪贴板图片
-              </p>
-              
-              <div className="grid grid-cols-2 gap-6 text-left text-xs">
-                {/* 快捷键 */}
-                <div>
-                  <p className="font-medium text-sm mb-2 text-foreground flex items-center gap-1"><Keyboard size={14} /> 快捷键</p>
-                  <div className="space-y-1">
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">V</kbd> 选择工具</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">H</kbd> 平移画布</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">R</kbd> 矩形</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">E</kbd> 椭圆</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">A</kbd> 箭头</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">L</kbd> 直线</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">T</kbd> 文字</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">B</kbd> 画笔</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">M</kbd> 序号标记</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">U</kbd> 马赛克</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">C</kbd> 裁剪</p>
+          {/* 欢迎提示 */}
+          {!image && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="text-center text-muted-foreground max-w-lg">
+                <p className="text-xl font-medium mb-4">欢迎使用 MarkPix</p>
+                <p className="text-sm mb-6 flex items-center justify-center gap-1">
+                  点击工具栏的 <FolderOpen size={16} className="inline" /> 打开图片，或按 <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Ctrl+V</kbd> 粘贴剪贴板图片
+                </p>
+
+                <div className="grid grid-cols-2 gap-6 text-left text-xs">
+                  {/* 快捷键 */}
+                  <div>
+                    <p className="font-medium text-sm mb-2 text-foreground flex items-center gap-1"><Keyboard size={14} /> 快捷键</p>
+                    <div className="space-y-1">
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">V</kbd> 选择工具</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">H</kbd> 平移画布</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">R</kbd> 矩形</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">E</kbd> 椭圆</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">A</kbd> 箭头</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">L</kbd> 直线</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">T</kbd> 文字</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">B</kbd> 画笔</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">M</kbd> 序号标记</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">U</kbd> 马赛克</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">C</kbd> 裁剪</p>
+                    </div>
                   </div>
-                </div>
 
-                {/* 鼠标操作 */}
-                <div>
-                  <p className="font-medium text-sm mb-2 text-foreground flex items-center gap-1"><Mouse size={14} /> 鼠标操作</p>
-                  <div className="space-y-1">
-                    <p><span className="font-medium">左键</span> 绘制/选择标注</p>
-                    <p><span className="font-medium">左键拖动</span> 移动标注/画布</p>
-                    <p><span className="font-medium">右键</span> 取消绘制/切换选择工具</p>
-                    <p><span className="font-medium">中键拖动</span> 平移画布</p>
-                    <p><span className="font-medium">滚轮</span> 缩放画布</p>
-                    <p><span className="font-medium">选中+滚轮</span> 调节属性</p>
-                  </div>
-                  
-                  <p className="font-medium text-sm mt-4 mb-2 text-foreground flex items-center gap-1"><Zap size={14} /> 常用操作</p>
-                  <div className="space-y-1">
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Z</kbd> 撤销</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Y</kbd> 重做</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+S</kbd> 保存</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+C</kbd> 复制</p>
-                    <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Del/Backspace</kbd> 删除选中</p>
+                  {/* 鼠标操作 */}
+                  <div>
+                    <p className="font-medium text-sm mb-2 text-foreground flex items-center gap-1"><Mouse size={14} /> 鼠标操作</p>
+                    <div className="space-y-1">
+                      <p><span className="font-medium">左键</span> 绘制/选择标注</p>
+                      <p><span className="font-medium">左键拖动</span> 移动标注/画布</p>
+                      <p><span className="font-medium">右键</span> 取消绘制/切换选择工具</p>
+                      <p><span className="font-medium">中键拖动</span> 平移画布</p>
+                      <p><span className="font-medium">滚轮</span> 缩放画布</p>
+                      <p><span className="font-medium">选中+滚轮</span> 调节属性</p>
+                    </div>
+
+                    <p className="font-medium text-sm mt-4 mb-2 text-foreground flex items-center gap-1"><Zap size={14} /> 常用操作</p>
+                    <div className="space-y-1">
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Z</kbd> 撤销</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Y</kbd> 重做</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+S</kbd> 保存</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+C</kbd> 复制</p>
+                      <p><kbd className="px-1 bg-gray-200 dark:bg-gray-700 rounded">Del/Backspace</kbd> 删除选中</p>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* 裁剪确认面板 */}
-        {cropArea && cropArea.width > 10 && cropArea.height > 10 && (
-          <div 
-            className={`absolute left-1/2 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 p-3 rounded-lg bg-white dark:bg-gray-800 border-2 border-blue-500 shadow-xl ${
-              isFullscreenMode ? "top-2" : "top-4"
-            }`}
-            style={{ zIndex: 9999 }}
-          >
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCropConfirm();
-              }}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors cursor-pointer"
+          {/* 裁剪确认面板 */}
+          {cropArea && cropArea.width > 10 && cropArea.height > 10 && (
+            <div
+              className={`absolute left-1/2 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 p-3 rounded-lg bg-white dark:bg-gray-800 border-2 border-blue-500 shadow-xl ${
+                isFullscreenMode ? "top-2" : "top-4"
+              }`}
+              style={{ zIndex: 9999 }}
             >
-              确认裁剪
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                void handleCropApplyDirect();
-              }}
-              className="px-4 py-2 text-sm font-medium text-white bg-emerald-500 hover:bg-emerald-600 rounded-md transition-colors cursor-pointer"
-            >
-              直接裁剪
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setCropArea(null);
-              }}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded-md transition-colors cursor-pointer"
-            >
-              取消
-            </button>
-          </div>
-        )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCropConfirm();
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors cursor-pointer"
+              >
+                确认裁剪
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleCropApplyDirect();
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-emerald-500 hover:bg-emerald-600 rounded-md transition-colors cursor-pointer"
+              >
+                直接裁剪
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCropArea(null);
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded-md transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 右侧竖向工具栏：工程制图工具 */}
+        <EngineeringRail />
       </div>
 
       {/* 设置对话框 */}
@@ -1488,7 +1652,9 @@ export function Editor() {
           <div className="relative z-10 w-full max-w-sm p-6 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-2xl">
             <h3 className="text-lg font-semibold mb-2">确认关闭</h3>
             <p className="text-sm text-muted-foreground mb-6">
-              您有未保存的更改，是否保存后再关闭？
+              {documents.length > 1
+                ? "有未保存的更改，关闭窗口后会丢失。建议先取消并保存各标签内容。"
+                : "您有未保存的更改，是否保存后再关闭？"}
             </p>
             <div className="flex gap-2 justify-end">
               <button
@@ -1503,48 +1669,14 @@ export function Editor() {
               >
                 不保存关闭
               </button>
-              <button
-                onClick={handleSaveAndClose}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors"
-              >
-                保存并关闭
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 打开新文件确认对话框 */}
-      {showOpenConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={() => setShowOpenConfirm(false)}
-          />
-          <div className="relative z-10 w-full max-w-sm p-6 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-2xl">
-            <h3 className="text-lg font-semibold mb-2">打开新文件</h3>
-            <p className="text-sm text-muted-foreground mb-6">
-              当前图片尚未保存，是否保存后再打开新文件？
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setShowOpenConfirm(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleConfirmOpen}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors"
-              >
-                不保存打开
-              </button>
-              <button
-                onClick={handleSaveAndOpen}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors"
-              >
-                保存并打开
-              </button>
+              {documents.length <= 1 && (
+                <button
+                  onClick={handleSaveAndClose}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors"
+                >
+                  保存并关闭
+                </button>
+              )}
             </div>
           </div>
         </div>

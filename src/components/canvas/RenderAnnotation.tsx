@@ -12,8 +12,22 @@ import {
   Shape,
 } from "react-konva";
 import Konva from "konva";
-import type { Annotation } from "@/types";
+import type { Annotation, CadStyleFields, CadTermination } from "@/types";
 import { useEditorStore } from "@/store/editorStore";
+import { CadTextLabel } from "./CadTextLabel";
+import {
+  angularDimLayout,
+  balloonLayout,
+  cadArrowPolygon,
+  cadDotRadius,
+  cadLocalBounds,
+  cadSlashPoints,
+  leaderDimLayout,
+  linearDimLayout,
+  radialDisplayText,
+  radialDimLayout,
+  type EndMark,
+} from "@/lib/cad";
 
 interface RenderAnnotationProps {
   annotation: Annotation;
@@ -300,6 +314,16 @@ export function RenderAnnotation({
         />
       );
 
+    case "callout":
+      return (
+        <CalloutAnnotationRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+          scale={scale}
+        />
+      );
+
     case "blur":
       return (
         <BlurAnnotationRenderer
@@ -327,6 +351,66 @@ export function RenderAnnotation({
           scale={scale}
           isSelected={isSelected}
           onLiveChange={onLiveChange}
+        />
+      );
+
+    case "dim_linear":
+      return (
+        <DimLinearRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+          scale={scale}
+        />
+      );
+
+    case "dim_angular":
+      return (
+        <DimAngularRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+          scale={scale}
+        />
+      );
+
+    case "dim_radial":
+      return (
+        <DimRadialRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+          scale={scale}
+        />
+      );
+
+    case "center_mark":
+      return (
+        <CenterMarkRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+          scale={scale}
+        />
+      );
+
+    case "leader":
+      return (
+        <LeaderRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+          scale={scale}
+        />
+      );
+
+    case "balloon":
+      return (
+        <BalloonRenderer
+          annotation={annotation}
+          commonProps={commonProps}
+          nodeRef={nodeRef}
+          scale={scale}
         />
       );
 
@@ -763,6 +847,135 @@ function MarkerAnnotationRenderer({
   );
 }
 
+// 序号引导箭头渲染器（序号圆 + 指向目标的箭头）
+interface CalloutAnnotationRendererProps {
+  annotation: Extract<Annotation, { type: "callout" }>;
+  commonProps: Record<string, unknown>;
+  nodeRef: React.RefObject<Konva.Node | null>;
+  scale?: number;
+}
+
+function CalloutAnnotationRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+  scale = 1,
+}: CalloutAnnotationRendererProps) {
+  const isFilled = annotation.markerStyle === "filled";
+  // 补偿后的尺寸，保证缩放时标记视觉大小一致
+  const compensatedSize = annotation.size / scale;
+  const radius = compensatedSize / 2;
+  const fontSize = compensatedSize * 0.5;
+
+  const { targetX, targetY } = annotation;
+  const len = Math.sqrt(targetX * targetX + targetY * targetY);
+  const hasArrow = len > radius + 2;
+  const ux = len > 0 ? targetX / len : 0;
+  const uy = len > 0 ? targetY / len : 0;
+  // 箭头从圆的边缘开始，避免压住序号
+  const startX = ux * radius;
+  const startY = uy * radius;
+
+  const strokeWidth = annotation.strokeWidth / scale;
+  const dash =
+    annotation.lineStyle === "dashed" ? [10 / scale, 5 / scale] : undefined;
+
+  // 透明点击区域，覆盖整个标记与箭头
+  const padding = Math.max(10 / scale, strokeWidth * 2);
+  const hitMinX = Math.min(-radius, targetX) - padding;
+  const hitMinY = Math.min(-radius, targetY) - padding;
+  const hitMaxX = Math.max(radius, targetX) + padding;
+  const hitMaxY = Math.max(radius, targetY) + padding;
+
+  let arrowNode: React.ReactNode = null;
+  if (hasArrow) {
+    if (annotation.arrowStyle === "filled") {
+      // QQ 风格：尾部细、头部粗的锥形
+      const headLength = Math.min(
+        len * 0.4,
+        Math.max(12 / scale, strokeWidth * 4)
+      );
+      const headWidth = Math.max(headLength * 0.5, strokeWidth * 1.2);
+      const bodyWidth = Math.max(headWidth * 0.35, strokeWidth * 0.4);
+      const baseX = targetX - ux * headLength;
+      const baseY = targetY - uy * headLength;
+      const px = -uy;
+      const py = ux;
+      arrowNode = (
+        <Line
+          points={[
+            startX,
+            startY,
+            baseX + px * bodyWidth,
+            baseY + py * bodyWidth,
+            baseX + px * headWidth,
+            baseY + py * headWidth,
+            targetX,
+            targetY,
+            baseX - px * headWidth,
+            baseY - py * headWidth,
+            baseX - px * bodyWidth,
+            baseY - py * bodyWidth,
+          ]}
+          fill={annotation.fill}
+          closed={true}
+          listening={false}
+        />
+      );
+    } else {
+      arrowNode = (
+        <Arrow
+          points={[startX, startY, targetX, targetY]}
+          stroke={annotation.fill}
+          fill={annotation.fill}
+          strokeWidth={strokeWidth}
+          pointerLength={Math.max(10 / scale, strokeWidth * 2.5)}
+          pointerWidth={Math.max(8 / scale, strokeWidth * 2)}
+          dash={dash}
+          lineCap="round"
+          lineJoin="round"
+          listening={false}
+        />
+      );
+    }
+  }
+
+  return (
+    <Group
+      ref={nodeRef as React.RefObject<Konva.Group>}
+      {...commonProps}
+    >
+      <Rect
+        x={hitMinX}
+        y={hitMinY}
+        width={hitMaxX - hitMinX}
+        height={hitMaxY - hitMinY}
+        fill="transparent"
+      />
+      {arrowNode}
+      <Circle
+        radius={radius}
+        fill={isFilled ? annotation.fill : "transparent"}
+        stroke={annotation.fill}
+        strokeWidth={2 / scale}
+      />
+      <Text
+        text={String(annotation.value)}
+        fontSize={fontSize}
+        fontFamily="Arial, sans-serif"
+        fontStyle="bold"
+        fill={isFilled ? annotation.textColor : annotation.fill}
+        width={compensatedSize}
+        height={compensatedSize}
+        align="center"
+        verticalAlign="middle"
+        offsetX={compensatedSize / 2}
+        offsetY={compensatedSize / 2}
+      />
+    </Group>
+  );
+}
+
 // 马赛克区域渲染器 - 使用 Kuwahara 滤镜实现油画效果
 interface BlurAnnotationRendererProps {
   annotation: Extract<Annotation, { type: "blur" }>;
@@ -1140,7 +1353,7 @@ function MagnifierAnnotationRenderer({
     ctx.restore();
 
     // 绘制边框
-    ctx.strokeStyle = '#3b82f6';
+    ctx.strokeStyle = "#3b82f6";
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(targetRadius, targetRadius, targetRadius - 1.5, 0, Math.PI * 2);
@@ -1712,6 +1925,541 @@ function MagnifierAnnotationRenderer({
           onMouseLeave={resetCursor}
         />
       )}
+    </Group>
+  );
+}
+
+// ==================== CAD 标注渲染 ====================
+
+interface CadRendererProps<A> {
+  annotation: A;
+  commonProps: Record<string, unknown>;
+  nodeRef: React.RefObject<Konva.Node | null>;
+  scale?: number;
+}
+
+/**
+ * 布局计算使用缩放补偿后的线宽与字号，使图纸线条和文字在任何缩放级别下
+ * 保持视觉一致；几何点位仍使用图片坐标。
+ */
+function cadForLayout<T extends Annotation>(ann: T, scale: number): T {
+  if (scale === 1) return ann;
+  const next: Record<string, unknown> = {
+    ...ann,
+    strokeWidth: (ann as unknown as CadStyleFields).strokeWidth / scale,
+    fontSize: (ann as unknown as CadStyleFields).fontSize / scale,
+  };
+  if ("size" in ann) {
+    next.size = (ann as unknown as { size: number }).size / scale;
+  }
+  return next as T;
+}
+
+/** 尺寸线端点符号：ASME 实心箭头 / ISO 45° 斜线 / 圆点 */
+function CadEndMarks({
+  marks,
+  termination,
+  stroke,
+  length,
+  strokeWidth,
+  fontSize,
+}: {
+  marks: EndMark[];
+  termination: CadTermination;
+  stroke: string;
+  length: number;
+  strokeWidth: number;
+  fontSize: number;
+}) {
+  if (termination === "slash") {
+    return (
+      <>
+        {marks.map((m, i) => (
+          <Line
+            key={i}
+            points={cadSlashPoints(m.tip, m.dir, length)}
+            stroke={stroke}
+            strokeWidth={Math.max(strokeWidth, 1)}
+            lineCap="butt"
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        ))}
+      </>
+    );
+  }
+  if (termination === "dot") {
+    const radius = cadDotRadius(strokeWidth, fontSize);
+    return (
+      <>
+        {marks.map((m, i) => (
+          <Circle
+            key={i}
+            x={m.tip.x}
+            y={m.tip.y}
+            radius={radius}
+            fill={stroke}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        ))}
+      </>
+    );
+  }
+  return (
+    <>
+      {marks.map((m, i) => (
+        <Line
+          key={i}
+          points={cadArrowPolygon(m.tip, m.dir, length)}
+          fill={stroke}
+          closed
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
+    </>
+  );
+}
+
+/** 透明命中区域，使整组标注可点选与拖动 */
+function CadHitArea({ bounds }: { bounds: { x: number; y: number; w: number; h: number } | null }) {
+  if (!bounds) return null;
+  return (
+    <Rect
+      x={bounds.x}
+      y={bounds.y}
+      width={bounds.w}
+      height={bounds.h}
+      fill="transparent"
+      perfectDrawEnabled={false}
+    />
+  );
+}
+
+/** 线性尺寸标注：尺寸线 + 尺寸界线 + 端点符号 + 文字 */
+function DimLinearRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+  scale = 1,
+}: CadRendererProps<Extract<Annotation, { type: "dim_linear" }>>) {
+  const { editingCadTextId, setEditingCadTextId, updateAnnotation } =
+    useEditorStore();
+  const layAnn = cadForLayout(annotation, scale);
+  const lay = linearDimLayout(layAnn);
+  const sw = layAnn.strokeWidth;
+  const bounds = cadLocalBounds(layAnn);
+  const d = lay.dir;
+  const mid = {
+    x: (lay.dimStart.x + lay.dimEnd.x) / 2,
+    y: (lay.dimStart.y + lay.dimEnd.y) / 2,
+  };
+
+  // inline 模式下文字打断尺寸线，形成两段
+  const segments: number[][] =
+    lay.gapHalf > 0 && lay.span > lay.gapHalf * 2
+      ? [
+          [
+            lay.dimStart.x,
+            lay.dimStart.y,
+            mid.x - d.x * lay.gapHalf,
+            mid.y - d.y * lay.gapHalf,
+          ],
+          [
+            mid.x + d.x * lay.gapHalf,
+            mid.y + d.y * lay.gapHalf,
+            lay.dimEnd.x,
+            lay.dimEnd.y,
+          ],
+        ]
+      : [[lay.dimStart.x, lay.dimStart.y, lay.dimEnd.x, lay.dimEnd.y]];
+
+  return (
+    <Group
+      ref={nodeRef as React.RefObject<Konva.Group>}
+      {...commonProps}
+      onDblClick={() => setEditingCadTextId(annotation.id)}
+      onDblTap={() => setEditingCadTextId(annotation.id)}
+    >
+      <CadHitArea bounds={bounds} />
+      {lay.extLines.map(([a, b], i) => (
+        <Line
+          key={`ext-${i}`}
+          points={[a.x, a.y, b.x, b.y]}
+          stroke={layAnn.stroke}
+          strokeWidth={sw}
+          lineCap="butt"
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
+      {segments.map((p, i) => (
+        <Line
+          key={`dim-${i}`}
+          points={p}
+          stroke={layAnn.stroke}
+          strokeWidth={sw}
+          lineCap="butt"
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
+      <CadEndMarks
+        marks={lay.ends}
+        termination={layAnn.termination}
+        stroke={layAnn.stroke}
+        length={lay.arrowLength}
+        strokeWidth={sw}
+        fontSize={layAnn.fontSize}
+      />
+      <CadTextLabel
+        ownerId={annotation.id}
+        text={annotation.text}
+        placeholder="尺寸值"
+        onEndEdit={() => setEditingCadTextId(null)}
+        fontSize={layAnn.fontSize}
+        fontFamily={layAnn.fontFamily}
+        fill={layAnn.stroke}
+        x={lay.textCenter.x}
+        y={lay.textCenter.y}
+        rotation={lay.textAngle}
+        editing={editingCadTextId === annotation.id}
+        onChange={(text) => {
+          updateAnnotation(annotation.id, { text });
+          setEditingCadTextId(null);
+        }}
+      />
+    </Group>
+  );
+}
+
+/** 角度标注：圆弧 + 两端箭头 + 分角线方向文字 */
+function DimAngularRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+  scale = 1,
+}: CadRendererProps<Extract<Annotation, { type: "dim_angular" }>>) {
+  const { editingCadTextId, setEditingCadTextId, updateAnnotation } =
+    useEditorStore();
+  const layAnn = cadForLayout(annotation, scale);
+  const lay = angularDimLayout(layAnn);
+  const sw = layAnn.strokeWidth;
+  const bounds = cadLocalBounds(layAnn);
+
+  // 取点不足或两边重合时不绘制，避免预览出现退化图形
+  if (
+    Math.hypot(annotation.ax, annotation.ay) < 2 ||
+    Math.hypot(annotation.bx, annotation.by) < 2
+  ) {
+    return null;
+  }
+
+  const start = (lay.startAngle * Math.PI) / 180;
+  const end = ((lay.startAngle + lay.sweep) * Math.PI) / 180;
+  const steps = Math.max(8, Math.round(Math.abs(lay.sweep) / 4));
+  const arcPoints: number[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = start + ((end - start) * i) / steps;
+    arcPoints.push(Math.cos(a) * lay.radius, Math.sin(a) * lay.radius);
+  }
+
+  return (
+    <Group
+      ref={nodeRef as React.RefObject<Konva.Group>}
+      {...commonProps}
+      onDblClick={() => setEditingCadTextId(annotation.id)}
+      onDblTap={() => setEditingCadTextId(annotation.id)}
+    >
+      <CadHitArea bounds={bounds} />
+      <Line
+        points={arcPoints}
+        stroke={layAnn.stroke}
+        strokeWidth={sw}
+        lineCap="butt"
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      <CadEndMarks
+        marks={lay.ends}
+        termination="arrow"
+        stroke={layAnn.stroke}
+        length={lay.arrowLength}
+        strokeWidth={sw}
+        fontSize={layAnn.fontSize}
+      />
+      <CadTextLabel
+        ownerId={annotation.id}
+        text={annotation.text}
+        placeholder="角度"
+        onEndEdit={() => setEditingCadTextId(null)}
+        fontSize={layAnn.fontSize}
+        fontFamily={layAnn.fontFamily}
+        fill={layAnn.stroke}
+        x={lay.textCenter.x}
+        y={lay.textCenter.y}
+        rotation={lay.textAngle}
+        editing={editingCadTextId === annotation.id}
+        onChange={(text) => {
+          updateAnnotation(annotation.id, { text });
+          setEditingCadTextId(null);
+        }}
+      />
+    </Group>
+  );
+}
+
+/** 半径 / 直径标注：过圆心引出线 + 圆周端符 + R / ⌀ 前缀文字 */
+function DimRadialRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+  scale = 1,
+}: CadRendererProps<Extract<Annotation, { type: "dim_radial" }>>) {
+  const { editingCadTextId, setEditingCadTextId, updateAnnotation } =
+    useEditorStore();
+  const layAnn = cadForLayout(annotation, scale);
+  const lay = radialDimLayout(layAnn);
+  const sw = layAnn.strokeWidth;
+  const bounds = cadLocalBounds(layAnn);
+
+  return (
+    <Group
+      ref={nodeRef as React.RefObject<Konva.Group>}
+      {...commonProps}
+      onDblClick={() => setEditingCadTextId(annotation.id)}
+      onDblTap={() => setEditingCadTextId(annotation.id)}
+    >
+      <CadHitArea bounds={bounds} />
+      {lay.centerMark.map(([a, b], i) => (
+        <Line
+          key={`cm-${i}`}
+          points={[a.x, a.y, b.x, b.y]}
+          stroke={layAnn.stroke}
+          strokeWidth={sw}
+          lineCap="butt"
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
+      <Line
+        points={[lay.lineStart.x, lay.lineStart.y, lay.tip.x, lay.tip.y]}
+        stroke={layAnn.stroke}
+        strokeWidth={sw}
+        lineCap="butt"
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      <CadEndMarks
+        marks={[{ tip: lay.tip, dir: lay.dir }]}
+        termination={layAnn.termination}
+        stroke={layAnn.stroke}
+        length={lay.arrowLength}
+        strokeWidth={sw}
+        fontSize={layAnn.fontSize}
+      />
+      <CadTextLabel
+        ownerId={annotation.id}
+        text={annotation.text ? radialDisplayText(annotation) : ""}
+        placeholder={layAnn.kind === "diameter" ? "⌀直径" : "R半径"}
+        onEndEdit={() => setEditingCadTextId(null)}
+        fontSize={layAnn.fontSize}
+        fontFamily={layAnn.fontFamily}
+        fill={layAnn.stroke}
+        x={lay.textCenter.x}
+        y={lay.textCenter.y}
+        rotation={lay.textAngle}
+        editing={editingCadTextId === annotation.id}
+        onChange={(text) => {
+          // 去掉可能重复的前缀，渲染时自动补齐 R / ⌀
+          const prefix = layAnn.kind === "diameter" ? "⌀" : "R";
+          const body = text.startsWith(prefix) ? text.slice(prefix.length) : text;
+          updateAnnotation(annotation.id, { text: body });
+          setEditingCadTextId(null);
+        }}
+      />
+    </Group>
+  );
+}
+
+/** 中心线标记：过孔心的十字细实线 */
+function CenterMarkRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+  scale = 1,
+}: CadRendererProps<Extract<Annotation, { type: "center_mark" }>>) {
+  const layAnn = cadForLayout(annotation, scale);
+  const half = layAnn.size / 2;
+  const sw = layAnn.strokeWidth;
+  const bounds = cadLocalBounds(layAnn);
+
+  return (
+    <Group
+      ref={nodeRef as React.RefObject<Konva.Group>}
+      {...commonProps}
+    >
+      <CadHitArea bounds={bounds} />
+      <Line
+        points={[-half, 0, half, 0]}
+        stroke={layAnn.stroke}
+        strokeWidth={sw}
+        lineCap="butt"
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      <Line
+        points={[0, -half, 0, half]}
+        stroke={layAnn.stroke}
+        strokeWidth={sw}
+        lineCap="butt"
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    </Group>
+  );
+}
+
+/** 引线标注：指向端 + 折线 + 水平基准线 + 上方注释文字 */
+function LeaderRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+  scale = 1,
+}: CadRendererProps<Extract<Annotation, { type: "leader" }>>) {
+  const { editingCadTextId, setEditingCadTextId, updateAnnotation } =
+    useEditorStore();
+  const layAnn = cadForLayout(annotation, scale);
+  const lay = leaderDimLayout(layAnn);
+  const sw = layAnn.strokeWidth;
+  const bounds = cadLocalBounds(layAnn);
+
+  return (
+    <Group
+      ref={nodeRef as React.RefObject<Konva.Group>}
+      {...commonProps}
+      onDblClick={() => setEditingCadTextId(annotation.id)}
+      onDblTap={() => setEditingCadTextId(annotation.id)}
+    >
+      <CadHitArea bounds={bounds} />
+      <Line
+        points={[lay.anchor.x, lay.anchor.y, lay.elbow.x, lay.elbow.y, lay.shelfEnd.x, lay.shelfEnd.y]}
+        stroke={layAnn.stroke}
+        strokeWidth={sw}
+        lineCap="butt"
+        lineJoin="miter"
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      <CadEndMarks
+        marks={lay.ends}
+        termination={layAnn.termination}
+        stroke={layAnn.stroke}
+        length={lay.arrowLength}
+        strokeWidth={sw}
+        fontSize={layAnn.fontSize}
+      />
+      <CadTextLabel
+        ownerId={annotation.id}
+        text={annotation.text}
+        placeholder="注释"
+        onEndEdit={() => setEditingCadTextId(null)}
+        fontSize={layAnn.fontSize}
+        fontFamily={layAnn.fontFamily}
+        fill={layAnn.stroke}
+        x={lay.textCenter.x}
+        y={lay.textCenter.y}
+        rotation={0}
+        editing={editingCadTextId === annotation.id}
+        onChange={(text) => {
+          updateAnnotation(annotation.id, { text });
+          setEditingCadTextId(null);
+        }}
+      />
+    </Group>
+  );
+}
+
+/** 件号气泡：圆 / 方框件号 + 指向目标的指引线 */
+function BalloonRenderer({
+  annotation,
+  commonProps,
+  nodeRef,
+  scale = 1,
+}: CadRendererProps<Extract<Annotation, { type: "balloon" }>>) {
+  const { editingCadTextId, setEditingCadTextId, updateAnnotation } =
+    useEditorStore();
+  const layAnn = cadForLayout(annotation, scale);
+  const lay = balloonLayout(layAnn);
+  const sw = layAnn.strokeWidth;
+  const bounds = cadLocalBounds(layAnn);
+  const labelSize = Math.max(layAnn.size * 0.52, sw * 6);
+
+  return (
+    <Group
+      ref={nodeRef as React.RefObject<Konva.Group>}
+      {...commonProps}
+      onDblClick={() => setEditingCadTextId(annotation.id)}
+      onDblTap={() => setEditingCadTextId(annotation.id)}
+    >
+      <CadHitArea bounds={bounds} />
+      <Line
+        points={[lay.start.x, lay.start.y, lay.target.x, lay.target.y]}
+        stroke={layAnn.stroke}
+        strokeWidth={sw}
+        lineCap="butt"
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      <CadEndMarks
+        marks={[{ tip: lay.target, dir: lay.dir }]}
+        termination={layAnn.termination}
+        stroke={layAnn.stroke}
+        length={lay.arrowLength}
+        strokeWidth={sw}
+        fontSize={labelSize}
+      />
+      {layAnn.shape === "circle" && (
+        <Circle
+          radius={lay.radius}
+          fill={layAnn.background}
+          stroke={layAnn.stroke}
+          strokeWidth={Math.max(sw, 1.2)}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      )}
+      {layAnn.shape === "rect" && (
+        <Rect
+          x={-lay.boxW / 2}
+          y={-lay.boxH / 2}
+          width={lay.boxW}
+          height={lay.boxH}
+          fill={layAnn.background}
+          stroke={layAnn.stroke}
+          strokeWidth={Math.max(sw, 1.2)}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      )}
+      <CadTextLabel
+        ownerId={annotation.id}
+        text={String(annotation.value ?? "")}
+        placeholder="件号"
+        onEndEdit={() => setEditingCadTextId(null)}
+        fontSize={labelSize}
+        fontFamily={layAnn.fontFamily}
+        fill={layAnn.textColor}
+        x={0}
+        y={0}
+        rotation={0}
+        editing={editingCadTextId === annotation.id}
+        onChange={(text) => {
+          updateAnnotation(annotation.id, { value: text });
+          setEditingCadTextId(null);
+        }}
+      />
     </Group>
   );
 }
